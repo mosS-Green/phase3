@@ -48,6 +48,25 @@ class TelegramSync {
             val body = response.body?.string() ?: ""
 
             if (response.isSuccessful && body.contains("\"ok\":true")) {
+                // Try to pin the uploaded file so it can be reliably found by bots
+                try {
+                    val jsonResponse = org.json.JSONObject(body)
+                    val messageId = jsonResponse.optJSONObject("result")?.optInt("message_id")
+                    if (messageId != null && messageId > 0) {
+                        val pinRequest = Request.Builder()
+                            .url("${BASE_URL}${BOT_TOKEN}/pinChatMessage")
+                            .post(
+                                okhttp3.FormBody.Builder()
+                                    .add("chat_id", CHAT_ID)
+                                    .add("message_id", messageId.toString())
+                                    .build()
+                            )
+                            .build()
+                        client.newCall(pinRequest).execute()
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace() // pinning is best-effort
+                }
                 Result.success("Upload successful!")
             } else {
                 Result.failure(Exception("Upload failed: $body"))
@@ -59,39 +78,73 @@ class TelegramSync {
 
     suspend fun downloadLatestFile(): Result<ByteArray> = withContext(Dispatchers.IO) {
         try {
-            // Step 1: Get updates to find latest document
-            val updatesRequest = Request.Builder()
-                .url("${BASE_URL}${BOT_TOKEN}/getUpdates?limit=100")
-                .get()
-                .build()
+            var relevantFileId: String? = null
 
-            val updatesResponse = client.newCall(updatesRequest).execute()
-            val updatesBody = updatesResponse.body?.string() ?: ""
-
-            if (!updatesResponse.isSuccessful) {
-                return@withContext Result.failure(Exception("Failed to get updates"))
+            // First try to find it in the pinned message of the chat
+            try {
+                val chatRequest = Request.Builder()
+                    .url("${BASE_URL}${BOT_TOKEN}/getChat?chat_id=$CHAT_ID")
+                    .get()
+                    .build()
+                val chatResponse = client.newCall(chatRequest).execute()
+                if (chatResponse.isSuccessful) {
+                    val chatBody = chatResponse.body?.string() ?: ""
+                    val pinnedContent = org.json.JSONObject(chatBody)
+                        .optJSONObject("result")?.optJSONObject("pinned_message")
+                    val doc = pinnedContent?.optJSONObject("document")
+                    if (doc != null) {
+                        val fileId = doc.optString("file_id")
+                        if (!fileId.isNullOrEmpty()) {
+                            relevantFileId = fileId
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
 
-            // Parse file_id from latest document message
-            val fileIdRegex = """"file_id"\s*:\s*"([^"]+)"""".toRegex()
-            val fileNameRegex = """"file_name"\s*:\s*"([^"]*\.xlsx)"""".toRegex()
+            // Fallback to getUpdates
+            if (relevantFileId == null) {
+                val updatesRequest = Request.Builder()
+                    .url("${BASE_URL}${BOT_TOKEN}/getUpdates?limit=100")
+                    .get()
+                    .build()
 
-            // Find all xlsx file_ids - we want the latest one
-            val fileNameMatches = fileNameRegex.findAll(updatesBody).toList()
-            if (fileNameMatches.isEmpty()) {
+                val updatesResponse = client.newCall(updatesRequest).execute()
+                val updatesBody = updatesResponse.body?.string() ?: ""
+
+                if (!updatesResponse.isSuccessful) {
+                    return@withContext Result.failure(Exception("Failed to get updates"))
+                }
+
+                try {
+                    val jsonBody = org.json.JSONObject(updatesBody)
+                    val results = jsonBody.optJSONArray("result")
+                    if (results != null) {
+                        for (i in results.length() - 1 downTo 0) {
+                            val update = results.optJSONObject(i) ?: continue
+                            val msg = update.optJSONObject("message") ?: update.optJSONObject("channel_post")
+                            val doc = msg?.optJSONObject("document")
+                            if (doc != null) {
+                                val fileName = doc.optString("file_name", "").lowercase()
+                                val mimeType = doc.optString("mime_type", "").lowercase()
+                                if (fileName.endsWith(".xlsx") || mimeType.contains("spreadsheet")) {
+                                    relevantFileId = doc.optString("file_id")
+                                    if (!relevantFileId.isNullOrEmpty()) {
+                                        break
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+
+            if (relevantFileId.isNullOrEmpty()) {
                 return@withContext Result.failure(Exception("No Excel files found in chat"))
             }
-
-            // Get the file_id that appears closest to the last xlsx filename match
-            val lastXlsxPos = fileNameMatches.last().range.first
-            val allFileIds = fileIdRegex.findAll(updatesBody).toList()
-
-            // Find the file_id right before the xlsx filename
-            val relevantFileId = allFileIds
-                .filter { it.range.first < lastXlsxPos }
-                .maxByOrNull { it.range.first }
-                ?.groupValues?.get(1)
-                ?: return@withContext Result.failure(Exception("Could not find file ID"))
 
             // Step 2: Get file path
             val fileRequest = Request.Builder()
@@ -102,9 +155,14 @@ class TelegramSync {
             val fileResponse = client.newCall(fileRequest).execute()
             val fileBody = fileResponse.body?.string() ?: ""
 
-            val filePathRegex = """"file_path"\s*:\s*"([^"]+)"""".toRegex()
-            val filePath = filePathRegex.find(fileBody)?.groupValues?.get(1)
-                ?: return@withContext Result.failure(Exception("Could not get file path"))
+            // We can parse the file_path safely now using JSON
+            val filePath = try {
+                org.json.JSONObject(fileBody).optJSONObject("result")?.optString("file_path")
+            } catch (e: Exception) { null }
+
+            if (filePath.isNullOrEmpty()) {
+                return@withContext Result.failure(Exception("Could not get file path"))
+            }
 
             // Step 3: Download the file
             val downloadRequest = Request.Builder()

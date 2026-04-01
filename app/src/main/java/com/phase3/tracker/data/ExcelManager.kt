@@ -109,7 +109,7 @@ class ExcelManager {
         if (excelValue != null) {
             cell.setCellValue(excelValue)
         } else {
-            cell.setBlank()
+            cell.setCellValue("")
         }
     }
 
