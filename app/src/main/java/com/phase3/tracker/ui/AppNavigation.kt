@@ -1,8 +1,8 @@
 package com.phase3.tracker.ui
 
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -28,9 +28,9 @@ sealed class Screen(val route: String) {
 @Composable
 fun AppNavigation(viewModel: MainViewModel) {
     val navController = rememberNavController()
-    val towers by viewModel.towers.collectAsState()
-    val isUploading by viewModel.isUploading.collectAsState()
-    val isDownloading by viewModel.isDownloading.collectAsState()
+    val towers by viewModel.towers.collectAsStateWithLifecycle()
+    val isUploading by viewModel.isUploading.collectAsStateWithLifecycle()
+    val isDownloading by viewModel.isDownloading.collectAsStateWithLifecycle()
 
     NavHost(navController = navController, startDestination = Screen.Home.route) {
 

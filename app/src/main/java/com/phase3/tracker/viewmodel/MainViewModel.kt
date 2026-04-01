@@ -80,7 +80,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val currentStatus = activity.statuses[flatNumber] ?: FlatStatus.EMPTY
         val newStatus = currentStatus.next()
 
-        activity.statuses[flatNumber] = newStatus
+        // Create a new map and copy to a new activity instance for Compose recomposition
+        val newStatuses = activity.statuses.toMutableMap()
+        newStatuses[flatNumber] = newStatus
+        val newActivity = activity.copy(statuses = newStatuses)
+
+        val newActivities = tower.activities.toMutableList()
+        newActivities[activityIndex] = newActivity
+        
+        val newTower = tower.copy(activities = newActivities)
+        towersList[towerIndex] = newTower
+
         excelManager.updateStatus(tower.sheetName, activity.rowIndex, flatNumber, newStatus)
 
         // Trigger recomposition
@@ -107,10 +117,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             currentStatuses.groupBy { it }.maxByOrNull { it.value.size }?.key ?: FlatStatus.EMPTY
         }
 
+        val newStatuses = activity.statuses.toMutableMap()
         for (flatNum in flatsOnFloor) {
-            activity.statuses[flatNum] = targetStatus
+            newStatuses[flatNum] = targetStatus
             excelManager.updateStatus(tower.sheetName, activity.rowIndex, flatNum, targetStatus)
         }
+
+        val newActivity = activity.copy(statuses = newStatuses)
+        val newActivities = tower.activities.toMutableList()
+        newActivities[activityIndex] = newActivity
+        
+        val newTower = tower.copy(activities = newActivities)
+        towersList[towerIndex] = newTower
 
         _towers.value = towersList.toList()
         saveExcelAsync()
@@ -118,7 +136,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun addActivity(towerIndex: Int, activityName: String) {
         viewModelScope.launch {
-            val tower = _towers.value.getOrNull(towerIndex) ?: return@launch
+            val towersList = _towers.value.toMutableList()
+            val tower = towersList.getOrNull(towerIndex) ?: return@launch
             withContext(Dispatchers.IO) {
                 val newRow = excelManager.addActivity(tower.sheetName, activityName)
                 if (newRow > 0) {
@@ -126,16 +145,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val statuses = mutableMapOf<Int, FlatStatus>()
                     ExcelManager.FLAT_NUMBERS.forEach { statuses[it] = FlatStatus.EMPTY }
 
-                    tower.activities.add(
-                        Activity(
-                            name = activityName,
-                            rowIndex = newRow,
-                            groupName = group?.name ?: "Other",
-                            groupIndex = group?.index ?: 0,
-                            statuses = statuses
-                        )
+                    val newActivity = Activity(
+                        name = activityName,
+                        rowIndex = newRow,
+                        groupName = group?.name ?: "Other",
+                        groupIndex = group?.index ?: 0,
+                        statuses = statuses
                     )
-                    _towers.value = _towers.value.toList()
+                    
+                    val newActivities = tower.activities.toMutableList().apply { add(newActivity) }
+                    val newTower = tower.copy(activities = newActivities)
+                    towersList[towerIndex] = newTower
+
+                    _towers.value = towersList.toList()
                     saveExcel()
                 }
             }
@@ -145,12 +167,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun renameActivity(towerIndex: Int, activityIndex: Int, newName: String) {
         viewModelScope.launch {
-            val tower = _towers.value.getOrNull(towerIndex) ?: return@launch
+            val towersList = _towers.value.toMutableList()
+            val tower = towersList.getOrNull(towerIndex) ?: return@launch
             val activity = tower.activities.getOrNull(activityIndex) ?: return@launch
             withContext(Dispatchers.IO) {
                 excelManager.renameActivity(tower.sheetName, activity.rowIndex, newName)
-                tower.activities[activityIndex] = activity.copy(name = newName)
-                _towers.value = _towers.value.toList()
+                
+                val newActivity = activity.copy(name = newName)
+                val newActivities = tower.activities.toMutableList()
+                newActivities[activityIndex] = newActivity
+                val newTower = tower.copy(activities = newActivities)
+                towersList[towerIndex] = newTower
+                
+                _towers.value = towersList.toList()
                 saveExcel()
             }
             _statusMessage.value = "Renamed to: $newName"

@@ -10,7 +10,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -26,8 +26,8 @@ class MainActivity : ComponentActivity() {
         setContent {
             Phase3Theme {
                 val viewModel: MainViewModel = viewModel()
-                val statusMessage by viewModel.statusMessage.collectAsState()
-                val isLoading by viewModel.isLoading.collectAsState()
+                val statusMessage by viewModel.statusMessage.collectAsStateWithLifecycle()
+                val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
                 val snackbarHostState = remember { SnackbarHostState() }
 
                 LaunchedEffect(statusMessage) {

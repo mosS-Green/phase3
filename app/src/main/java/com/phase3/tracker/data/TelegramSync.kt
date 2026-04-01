@@ -1,5 +1,6 @@
 package com.phase3.tracker.data
 
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -52,6 +53,9 @@ class TelegramSync {
                 try {
                     val jsonResponse = org.json.JSONObject(body)
                     val messageId = jsonResponse.optJSONObject("result")?.optInt("message_id")
+                    val doc = jsonResponse.optJSONObject("result")?.optJSONObject("document")
+                    val fileId = doc?.optString("file_id")
+
                     if (messageId != null && messageId > 0) {
                         val pinRequest = Request.Builder()
                             .url("${BASE_URL}${BOT_TOKEN}/pinChatMessage")
@@ -64,8 +68,21 @@ class TelegramSync {
                             .build()
                         client.newCall(pinRequest).execute()
                     }
+
+                    // Absolute fallback: save fileId to bot description
+                    if (!fileId.isNullOrEmpty()) {
+                        val descRequest = Request.Builder()
+                            .url("${BASE_URL}${BOT_TOKEN}/setMyShortDescription")
+                            .post(
+                                okhttp3.FormBody.Builder()
+                                    .add("short_description", fileId)
+                                    .build()
+                            )
+                            .build()
+                        client.newCall(descRequest).execute()
+                    }
                 } catch (e: Exception) {
-                    e.printStackTrace() // pinning is best-effort
+                    Log.d("TelegramSync", "pin/description fallback failed: ${e.message}")
                 }
                 Result.success("Upload successful!")
             } else {
@@ -100,45 +117,65 @@ class TelegramSync {
                     }
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
+                Log.d("TelegramSync", "Failed to parse pinned message: ${e.message}")
             }
 
             // Fallback to getUpdates
             if (relevantFileId == null) {
+                // We use offset=-100 to get the last 100 updates, bypassing unacknowledged backlog
                 val updatesRequest = Request.Builder()
-                    .url("${BASE_URL}${BOT_TOKEN}/getUpdates?limit=100")
+                    .url("${BASE_URL}${BOT_TOKEN}/getUpdates?limit=100&offset=-1")
                     .get()
                     .build()
 
                 val updatesResponse = client.newCall(updatesRequest).execute()
                 val updatesBody = updatesResponse.body?.string() ?: ""
 
-                if (!updatesResponse.isSuccessful) {
-                    return@withContext Result.failure(Exception("Failed to get updates"))
-                }
-
-                try {
-                    val jsonBody = org.json.JSONObject(updatesBody)
-                    val results = jsonBody.optJSONArray("result")
-                    if (results != null) {
-                        for (i in results.length() - 1 downTo 0) {
-                            val update = results.optJSONObject(i) ?: continue
-                            val msg = update.optJSONObject("message") ?: update.optJSONObject("channel_post")
-                            val doc = msg?.optJSONObject("document")
-                            if (doc != null) {
-                                val fileName = doc.optString("file_name", "").lowercase()
-                                val mimeType = doc.optString("mime_type", "").lowercase()
-                                if (fileName.endsWith(".xlsx") || mimeType.contains("spreadsheet")) {
-                                    relevantFileId = doc.optString("file_id")
-                                    if (!relevantFileId.isNullOrEmpty()) {
-                                        break
+                if (updatesResponse.isSuccessful) {
+                    try {
+                        val jsonBody = org.json.JSONObject(updatesBody)
+                        val results = jsonBody.optJSONArray("result")
+                        if (results != null) {
+                            for (i in results.length() - 1 downTo 0) {
+                                val update = results.optJSONObject(i) ?: continue
+                                val msg = update.optJSONObject("message") ?: update.optJSONObject("channel_post")
+                                val doc = msg?.optJSONObject("document")
+                                if (doc != null) {
+                                    val fileName = doc.optString("file_name", "").lowercase()
+                                    val mimeType = doc.optString("mime_type", "").lowercase()
+                                    if (fileName.endsWith(".xlsx") || mimeType.contains("spreadsheet")) {
+                                        relevantFileId = doc.optString("file_id")
+                                        if (!relevantFileId.isNullOrEmpty()) {
+                                            break
+                                        }
                                     }
                                 }
                             }
                         }
+                    } catch (e: Exception) {
+                        Log.d("TelegramSync", "Failed to parse updates: ${e.message}")
+                    }
+                }
+            }
+
+            // Extreme Fallback: grab from bot description if pin and getUpdates failed
+            if (relevantFileId == null) {
+                try {
+                    val descRequest = Request.Builder()
+                        .url("${BASE_URL}${BOT_TOKEN}/getMyShortDescription")
+                        .get()
+                        .build()
+                    val descResponse = client.newCall(descRequest).execute()
+                    if (descResponse.isSuccessful) {
+                        val descBody = descResponse.body?.string() ?: ""
+                        val shortDesc = org.json.JSONObject(descBody)
+                            .optJSONObject("result")?.optString("short_description", "") ?: ""
+                        if (shortDesc.isNotBlank() && !shortDesc.contains(" ")) {
+                            relevantFileId = shortDesc
+                        }
                     }
                 } catch (e: Exception) {
-                    e.printStackTrace()
+                    Log.d("TelegramSync", "Failed to get bot description: ${e.message}")
                 }
             }
 
