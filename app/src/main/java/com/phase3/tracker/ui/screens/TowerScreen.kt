@@ -1,0 +1,274 @@
+package com.phase3.tracker.ui.screens
+
+import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.phase3.tracker.model.Activity
+import com.phase3.tracker.model.FlatStatus
+import com.phase3.tracker.ui.theme.*
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TowerScreen(
+    towerName: String,
+    activities: List<Activity>,
+    onActivityClick: (Int) -> Unit,
+    onAddActivity: (String) -> Unit,
+    onRenameActivity: (Int, String) -> Unit,
+    onBack: () -> Unit
+) {
+    var showAddDialog by remember { mutableStateOf(false) }
+    var addActivityName by remember { mutableStateOf("") }
+    var showRenameDialog by remember { mutableStateOf<Pair<Int, String>?>(null) }
+    var renameText by remember { mutableStateOf("") }
+
+    // Add Activity dialog
+    if (showAddDialog) {
+        AlertDialog(
+            onDismissRequest = { showAddDialog = false },
+            title = { Text("Add Activity") },
+            text = {
+                OutlinedTextField(
+                    value = addActivityName,
+                    onValueChange = { addActivityName = it },
+                    label = { Text("Activity name") },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        cursorColor = MaterialTheme.colorScheme.primary
+                    )
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (addActivityName.isNotBlank()) {
+                            onAddActivity(addActivityName.trim())
+                            addActivityName = ""
+                            showAddDialog = false
+                        }
+                    }
+                ) {
+                    Text("Add", color = MaterialTheme.colorScheme.primary)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddDialog = false; addActivityName = "" }) {
+                    Text("Cancel")
+                }
+            },
+            containerColor = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(16.dp)
+        )
+    }
+
+    // Rename Activity dialog
+    showRenameDialog?.let { (index, currentName) ->
+        LaunchedEffect(currentName) { renameText = currentName }
+        AlertDialog(
+            onDismissRequest = { showRenameDialog = null },
+            title = { Text("Rename Activity") },
+            text = {
+                OutlinedTextField(
+                    value = renameText,
+                    onValueChange = { renameText = it },
+                    label = { Text("New name") },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        cursorColor = MaterialTheme.colorScheme.primary
+                    )
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (renameText.isNotBlank()) {
+                            onRenameActivity(index, renameText.trim())
+                            showRenameDialog = null
+                        }
+                    }
+                ) {
+                    Text("Rename", color = MaterialTheme.colorScheme.primary)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRenameDialog = null }) {
+                    Text("Cancel")
+                }
+            },
+            containerColor = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(16.dp)
+        )
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        towerName,
+                        style = MaterialTheme.typography.headlineMedium.copy(
+                            fontWeight = FontWeight.Light,
+                            letterSpacing = (-1).sp
+                        )
+                    )
+                },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background
+                )
+            )
+        },
+        floatingActionButton = {
+            FloatingActionButton(
+                onClick = { showAddDialog = true },
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.background
+            ) {
+                Icon(Icons.Default.Add, contentDescription = "Add Activity")
+            }
+        }
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            contentPadding = PaddingValues(bottom = 88.dp)
+        ) {
+            itemsIndexed(activities) { index, activity ->
+                // Group header — show when group changes from previous item
+                val prevGroup = activities.getOrNull(index - 1)?.groupName
+                if (activity.groupName != prevGroup) {
+                    if (index > 0) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                    }
+
+                    Text(
+                        activity.groupName.uppercase(),
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            letterSpacing = 2.sp,
+                            color = GroupColors.getOrElse(activity.groupIndex) { GroupApartments },
+                            fontWeight = FontWeight.Bold
+                        ),
+                        modifier = Modifier.padding(vertical = 8.dp)
+                    )
+                }
+
+                ActivityItem(
+                    activity = activity,
+                    groupColor = GroupColors.getOrElse(activity.groupIndex) { GroupApartments },
+                    onClick = { onActivityClick(index) },
+                    onLongClick = { showRenameDialog = Pair(index, activity.name) }
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ActivityItem(
+    activity: Activity,
+    groupColor: Color,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
+) {
+    val completeCount = activity.statuses.values.count { it == FlatStatus.COMPLETE }
+    val wipCount = activity.statuses.values.count { it == FlatStatus.WIP }
+    val total = activity.statuses.size
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
+            .padding(horizontal = 12.dp, vertical = 10.dp)
+            .animateContentSize(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        // Group color indicator
+        Box(
+            modifier = Modifier
+                .size(4.dp, 28.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(groupColor)
+        )
+
+        // Activity name
+        Text(
+            activity.name,
+            style = MaterialTheme.typography.bodySmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+
+        // Mini status dots
+        Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+            if (completeCount > 0) {
+                StatusDot(StatusComplete, "$completeCount")
+            }
+            if (wipCount > 0) {
+                StatusDot(StatusWip, "$wipCount")
+            }
+            val emptyCount = total - completeCount - wipCount
+            if (emptyCount > 0) {
+                StatusDot(StatusEmpty.copy(alpha = 0.6f), "$emptyCount")
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatusDot(color: Color, count: String) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(6.dp)
+                .clip(CircleShape)
+                .background(color)
+        )
+        Text(
+            count,
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontSize = 9.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        )
+    }
+}
