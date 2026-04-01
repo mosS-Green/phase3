@@ -3,8 +3,8 @@ package com.phase3.tracker.ui.screens
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -69,7 +69,7 @@ fun TowerScreen(
                         }
                     }
                 ) {
-                    Text("Add", color = MaterialTheme.colorScheme.primary)
+                    Text("Add")
                 }
             },
             dismissButton = {
@@ -77,8 +77,7 @@ fun TowerScreen(
                     Text("Cancel")
                 }
             },
-            containerColor = MaterialTheme.colorScheme.surface,
-            shape = RoundedCornerShape(16.dp)
+            shape = RoundedCornerShape(28.dp)
         )
     }
 
@@ -109,7 +108,7 @@ fun TowerScreen(
                         }
                     }
                 ) {
-                    Text("Rename", color = MaterialTheme.colorScheme.primary)
+                    Text("Rename")
                 }
             },
             dismissButton = {
@@ -117,8 +116,7 @@ fun TowerScreen(
                     Text("Cancel")
                 }
             },
-            containerColor = MaterialTheme.colorScheme.surface,
-            shape = RoundedCornerShape(16.dp)
+            shape = RoundedCornerShape(28.dp)
         )
     }
 
@@ -128,10 +126,7 @@ fun TowerScreen(
                 title = {
                     Text(
                         towerName,
-                        style = MaterialTheme.typography.headlineMedium.copy(
-                            fontWeight = FontWeight.Light,
-                            letterSpacing = (-1).sp
-                        )
+                        style = MaterialTheme.typography.titleLarge
                     )
                 },
                 navigationIcon = {
@@ -140,19 +135,20 @@ fun TowerScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background
+                    containerColor = MaterialTheme.colorScheme.surface
                 )
             )
         },
         floatingActionButton = {
             FloatingActionButton(
                 onClick = { showAddDialog = true },
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.background
+                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
             ) {
                 Icon(Icons.Default.Add, contentDescription = "Add Activity")
             }
-        }
+        },
+        containerColor = MaterialTheme.colorScheme.surface
     ) { padding ->
         LazyColumn(
             modifier = Modifier
@@ -163,7 +159,7 @@ fun TowerScreen(
             contentPadding = PaddingValues(bottom = 88.dp)
         ) {
             itemsIndexed(activities) { index, activity ->
-                // Group header — show when group changes from previous item
+                // Group header
                 val prevGroup = activities.getOrNull(index - 1)?.groupName
                 if (activity.groupName != prevGroup) {
                     if (index > 0) {
@@ -172,8 +168,8 @@ fun TowerScreen(
 
                     Text(
                         activity.groupName.uppercase(),
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            letterSpacing = 2.sp,
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            letterSpacing = 1.5.sp,
                             color = GroupColors.getOrElse(activity.groupIndex) { GroupApartments },
                             fontWeight = FontWeight.Bold
                         ),
@@ -203,49 +199,60 @@ private fun ActivityItem(
     val completeCount = activity.statuses.values.count { it == FlatStatus.COMPLETE }
     val wipCount = activity.statuses.values.count { it == FlatStatus.WIP }
     val total = activity.statuses.size
+    val isDark = isSystemInDarkTheme()
+    val completeColor = if (isDark) StatusCompleteDark else StatusComplete
+    val wipColor = if (isDark) StatusWipDark else StatusWip
+    val emptyColor = if (isDark) StatusEmptyDark else StatusEmpty
 
-    Row(
+    Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
-            .combinedClickable(
-                onClick = onClick,
-                onLongClick = onLongClick
-            )
-            .padding(horizontal = 12.dp, vertical = 10.dp)
             .animateContentSize(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+        )
     ) {
-        // Group color indicator
-        Box(
+        Row(
             modifier = Modifier
-                .size(4.dp, 28.dp)
-                .clip(RoundedCornerShape(2.dp))
-                .background(groupColor)
-        )
+                .fillMaxWidth()
+                .combinedClickable(
+                    onClick = onClick,
+                    onLongClick = onLongClick
+                )
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            // Group color indicator
+            Box(
+                modifier = Modifier
+                    .size(4.dp, 28.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(groupColor)
+            )
 
-        // Activity name
-        Text(
-            activity.name,
-            style = MaterialTheme.typography.bodySmall,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f)
-        )
+            // Activity name
+            Text(
+                activity.name,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
 
-        // Mini status dots
-        Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-            if (completeCount > 0) {
-                StatusDot(StatusComplete, "$completeCount")
-            }
-            if (wipCount > 0) {
-                StatusDot(StatusWip, "$wipCount")
-            }
-            val emptyCount = total - completeCount - wipCount
-            if (emptyCount > 0) {
-                StatusDot(StatusEmpty.copy(alpha = 0.6f), "$emptyCount")
+            // Status dots
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (completeCount > 0) {
+                    StatusDot(completeColor, "$completeCount")
+                }
+                if (wipCount > 0) {
+                    StatusDot(wipColor, "$wipCount")
+                }
+                val emptyCount = total - completeCount - wipCount
+                if (emptyCount > 0) {
+                    StatusDot(emptyColor.copy(alpha = 0.7f), "$emptyCount")
+                }
             }
         }
     }
@@ -266,7 +273,7 @@ private fun StatusDot(color: Color, count: String) {
         Text(
             count,
             style = MaterialTheme.typography.labelSmall.copy(
-                fontSize = 9.sp,
+                fontSize = 10.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         )

@@ -4,7 +4,7 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -18,7 +18,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -40,51 +39,55 @@ fun HomeScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
+            LargeTopAppBar(
                 title = {
                     Text(
                         "Phase 3",
-                        style = MaterialTheme.typography.headlineMedium.copy(
-                            fontWeight = FontWeight.Light,
-                            letterSpacing = (-1).sp
-                        )
+                        style = MaterialTheme.typography.headlineMedium
                     )
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
-                    titleContentColor = MaterialTheme.colorScheme.primary
+                colors = TopAppBarDefaults.largeTopAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface
                 )
             )
         },
         floatingActionButton = {
             Column(
                 horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                FloatingActionButton(
+                // ── Download FAB (small) ────────────────────────
+                SmallFloatingActionButton(
                     onClick = onDownload,
-                    containerColor = MaterialTheme.colorScheme.secondary,
-                    contentColor = MaterialTheme.colorScheme.onSecondary
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
                 ) {
                     if (isDownloading) {
                         CircularProgressIndicator(
-                            modifier = Modifier.size(24.dp),
+                            modifier = Modifier.size(20.dp),
                             strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.onSecondary
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
                         )
                     } else {
-                        Icon(Icons.Default.CloudDownload, contentDescription = "Download")
+                        Icon(
+                            Icons.Default.CloudDownload,
+                            contentDescription = "Download from Telegram"
+                        )
                     }
                 }
+
+                // ── Edit / Data FAB (primary) ───────────────────
                 FloatingActionButton(
                     onClick = onNavigateToData,
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.background
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
                 ) {
                     Icon(Icons.Default.Edit, contentDescription = "Data")
                 }
             }
-        }
+        },
+        containerColor = MaterialTheme.colorScheme.surface
     ) { padding ->
         Column(
             modifier = Modifier
@@ -92,25 +95,30 @@ fun HomeScreen(
                 .padding(padding)
                 .padding(horizontal = 16.dp)
         ) {
-            // Tower toggle chips
+            // ── Tower selector chips ────────────────────────────
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 20.dp),
+                    .padding(bottom = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 towers.forEachIndexed { index, tower ->
                     FilterChip(
                         selected = selectedTowerIndex == index,
                         onClick = { selectedTowerIndex = index },
-                        label = { Text(tower.name, style = MaterialTheme.typography.labelLarge) },
+                        label = {
+                            Text(
+                                tower.name,
+                                style = MaterialTheme.typography.labelLarge
+                            )
+                        },
                         colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
-                            selectedLabelColor = MaterialTheme.colorScheme.primary
+                            selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
+                            selectedLabelColor = MaterialTheme.colorScheme.onSecondaryContainer
                         ),
                         border = FilterChipDefaults.filterChipBorder(
                             borderColor = MaterialTheme.colorScheme.outline,
-                            selectedBorderColor = MaterialTheme.colorScheme.primary,
+                            selectedBorderColor = MaterialTheme.colorScheme.secondaryContainer,
                             enabled = true,
                             selected = selectedTowerIndex == index
                         )
@@ -118,11 +126,11 @@ fun HomeScreen(
                 }
             }
 
-            // Section header
+            // ── Section label ───────────────────────────────────
             Text(
                 "ONGOING ACTIVITIES",
                 style = MaterialTheme.typography.labelSmall.copy(
-                    letterSpacing = 2.sp,
+                    letterSpacing = 1.5.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 ),
                 modifier = Modifier.padding(bottom = 12.dp)
@@ -138,18 +146,18 @@ fun HomeScreen(
                 ) {
                     Text(
                         "No ongoing activities",
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             } else {
                 LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
-                    contentPadding = PaddingValues(bottom = 88.dp)
+                    contentPadding = PaddingValues(bottom = 96.dp)
                 ) {
                     items(ongoingActivities) { activity ->
                         val activityIndex = tower!!.activities.indexOf(activity)
-                        ProgressBar(
+                        ActivityProgressCard(
                             activity = activity,
                             onClick = { onActivityClick(selectedTowerIndex, activityIndex) }
                         )
@@ -161,7 +169,7 @@ fun HomeScreen(
 }
 
 @Composable
-private fun ProgressBar(
+private fun ActivityProgressCard(
     activity: Activity,
     onClick: () -> Unit
 ) {
@@ -177,81 +185,90 @@ private fun ProgressBar(
     )
 
     val groupColor = GroupColors.getOrElse(activity.groupIndex) { GroupApartments }
+    val isDark = isSystemInDarkTheme()
+    val completeColor = if (isDark) StatusCompleteDark else StatusComplete
+    val wipColor = if (isDark) StatusWipDark else StatusWip
+    val emptyColor = if (isDark) StatusEmptyDark else StatusEmpty
 
-    Column(
+    Card(
+        onClick = onClick,
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-            .clickable(onClick = onClick)
-            .padding(12.dp)
-            .animateContentSize()
+            .animateContentSize(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+        )
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+        Column(
+            modifier = Modifier.padding(14.dp)
         ) {
             Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(8.dp)
-                        .clip(CircleShape)
-                        .background(groupColor)
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(groupColor)
+                    )
+                    Text(
+                        activity.name,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
                 Text(
-                    activity.name,
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    "${activity.completionPercent.toInt()}%",
+                    style = MaterialTheme.typography.labelLarge.copy(
+                        fontWeight = FontWeight.SemiBold,
+                        color = completeColor
+                    )
                 )
             }
-            Text(
-                "${activity.completionPercent.toInt()}%",
-                style = MaterialTheme.typography.labelSmall.copy(
-                    fontWeight = FontWeight.Bold,
-                    color = StatusComplete
-                )
-            )
-        }
 
-        Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
-        // Stacked progress bar
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(6.dp)
-                .clip(RoundedCornerShape(3.dp))
-                .background(StatusEmpty.copy(alpha = 0.3f))
-        ) {
-            if (animatedComplete > 0f) {
-                Box(
-                    modifier = Modifier
-                        .weight(animatedComplete.coerceAtLeast(0.001f))
-                        .fillMaxHeight()
-                        .background(StatusComplete)
-                )
-            }
-            if (animatedWip > 0f) {
-                Box(
-                    modifier = Modifier
-                        .weight(animatedWip.coerceAtLeast(0.001f))
-                        .fillMaxHeight()
-                        .background(StatusWip)
-                )
-            }
-            val emptyFraction = 1f - animatedComplete - animatedWip
-            if (emptyFraction > 0.001f) {
-                Box(
-                    modifier = Modifier
-                        .weight(emptyFraction)
-                        .fillMaxHeight()
-                )
+            // ── Stacked progress bar ────────────────────────────
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(6.dp)
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(emptyColor.copy(alpha = 0.35f))
+            ) {
+                if (animatedComplete > 0f) {
+                    Box(
+                        modifier = Modifier
+                            .weight(animatedComplete.coerceAtLeast(0.001f))
+                            .fillMaxHeight()
+                            .background(completeColor)
+                    )
+                }
+                if (animatedWip > 0f) {
+                    Box(
+                        modifier = Modifier
+                            .weight(animatedWip.coerceAtLeast(0.001f))
+                            .fillMaxHeight()
+                            .background(wipColor)
+                    )
+                }
+                val emptyFraction = 1f - animatedComplete - animatedWip
+                if (emptyFraction > 0.001f) {
+                    Box(
+                        modifier = Modifier
+                            .weight(emptyFraction)
+                            .fillMaxHeight()
+                    )
+                }
             }
         }
     }

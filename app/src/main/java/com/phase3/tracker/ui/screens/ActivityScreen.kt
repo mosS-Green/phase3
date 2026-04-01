@@ -3,8 +3,8 @@ package com.phase3.tracker.ui.screens
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -17,7 +17,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -34,15 +33,18 @@ fun ActivityScreen(
     onToggleFloor: (Int) -> Unit,
     onBack: () -> Unit
 ) {
+    val isDark = isSystemInDarkTheme()
+    val completeColor = if (isDark) StatusCompleteDark else StatusComplete
+    val wipColor = if (isDark) StatusWipDark else StatusWip
+    val emptyColor = if (isDark) StatusEmptyDark else StatusEmpty
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
                     Text(
                         activityName,
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontWeight = FontWeight.Normal
-                        ),
+                        style = MaterialTheme.typography.titleMedium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -53,31 +55,32 @@ fun ActivityScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background
+                    containerColor = MaterialTheme.colorScheme.surface
                 )
             )
-        }
+        },
+        containerColor = MaterialTheme.colorScheme.surface
     ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            // Legend bar
+            // ── Legend bar ───────────────────────────────────────
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally)
             ) {
-                LegendItem(StatusComplete, "Complete")
-                LegendItem(StatusWip, "WIP")
-                LegendItem(StatusEmpty.copy(alpha = 0.7f), "Empty")
+                LegendItem(completeColor, "Complete")
+                LegendItem(wipColor, "WIP")
+                LegendItem(emptyColor.copy(alpha = 0.75f), "Empty")
             }
 
             Spacer(modifier = Modifier.height(4.dp))
 
-            // Stats row
+            // ── Stats row ───────────────────────────────────────
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -88,15 +91,14 @@ fun ActivityScreen(
                 val wip = activity.statuses.values.count { it == FlatStatus.WIP }
                 val empty = activity.statuses.size - complete - wip
 
-                StatChip("${activity.completionPercent.toInt()}%", "Done", StatusComplete)
-                StatChip("$wip", "WIP", StatusWip)
-                StatChip("$empty", "Pending", StatusEmpty.copy(alpha = 0.7f))
+                StatChip("${activity.completionPercent.toInt()}%", "Done", completeColor)
+                StatChip("$wip", "WIP", wipColor)
+                StatChip("$empty", "Pending", emptyColor)
             }
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Grid: 4 columns + floor label = 5 columns
-            // Floor 34 at top, Floor 2 at bottom
+            // ── Grid: 4 columns + floor label ───────────────────
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
@@ -111,7 +113,6 @@ fun ActivityScreen(
                             .padding(bottom = 4.dp),
                         horizontalArrangement = Arrangement.spacedBy(3.dp)
                     ) {
-                        // Floor label column
                         Box(
                             modifier = Modifier.width(40.dp),
                             contentAlignment = Alignment.Center
@@ -125,7 +126,6 @@ fun ActivityScreen(
                                 )
                             )
                         }
-                        // Flat unit headers
                         for (unit in 1..4) {
                             Box(
                                 modifier = Modifier.weight(1f),
@@ -154,13 +154,15 @@ fun ActivityScreen(
                         horizontalArrangement = Arrangement.spacedBy(3.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Floor label (clickable to cycle all flats on floor)
+                        // Floor label
                         Box(
                             modifier = Modifier
                                 .width(40.dp)
                                 .height(44.dp)
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(
+                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                )
                                 .clickable { onToggleFloor(floor) },
                             contentAlignment = Alignment.Center
                         ) {
@@ -181,6 +183,9 @@ fun ActivityScreen(
                             FlatCell(
                                 flatNumber = flatNumber,
                                 status = status,
+                                completeColor = completeColor,
+                                wipColor = wipColor,
+                                emptyColor = emptyColor,
                                 onClick = { onToggleFlat(flatNumber) },
                                 modifier = Modifier.weight(1f)
                             )
@@ -196,29 +201,32 @@ fun ActivityScreen(
 private fun FlatCell(
     flatNumber: Int,
     status: FlatStatus,
+    completeColor: Color,
+    wipColor: Color,
+    emptyColor: Color,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val backgroundColor by animateColorAsState(
         targetValue = when (status) {
-            FlatStatus.COMPLETE -> StatusComplete
-            FlatStatus.WIP -> StatusWip
-            FlatStatus.EMPTY -> StatusEmpty.copy(alpha = 0.6f)
+            FlatStatus.COMPLETE -> completeColor
+            FlatStatus.WIP -> wipColor
+            FlatStatus.EMPTY -> emptyColor.copy(alpha = 0.55f)
         },
         animationSpec = tween(200),
         label = "bg"
     )
 
     val textColor = when (status) {
-        FlatStatus.COMPLETE -> Color.White
-        FlatStatus.WIP -> Color.Black
-        FlatStatus.EMPTY -> Color.White
+        FlatStatus.COMPLETE -> Color(0xFF1B3417) // dark on sage
+        FlatStatus.WIP -> Color(0xFF3D3520)      // dark on pale yellow
+        FlatStatus.EMPTY -> Color(0xFF3E1F18)    // dark on salmon
     }
 
     Box(
         modifier = modifier
             .height(44.dp)
-            .clip(RoundedCornerShape(6.dp))
+            .clip(RoundedCornerShape(8.dp))
             .background(backgroundColor)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
@@ -243,7 +251,7 @@ private fun LegendItem(color: Color, label: String) {
         Box(
             modifier = Modifier
                 .size(10.dp)
-                .clip(RoundedCornerShape(2.dp))
+                .clip(RoundedCornerShape(3.dp))
                 .background(color)
         )
         Text(
@@ -261,7 +269,7 @@ private fun StatChip(value: String, label: String, color: Color) {
         Text(
             value,
             style = MaterialTheme.typography.titleMedium.copy(
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.SemiBold,
                 color = color
             )
         )

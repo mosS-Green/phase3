@@ -8,38 +8,87 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
-private val DarkColorScheme = darkColorScheme(
-    primary = MossGreen,
-    secondary = SkyBlue,
-    background = DarkBackground,
-    surface = DarkSurface,
-    surfaceVariant = DarkSurfaceVariant,
-    onBackground = DarkOnBackground,
-    onSurface = DarkOnSurface,
-    onSurfaceVariant = DarkOnSurfaceVariant,
-    error = ErrorRed,
-    outline = DarkBorder,
-    primaryContainer = MossGreen.copy(alpha = 0.15f),
-    onPrimaryContainer = MossGreen,
+// ── MD3 Light Color Scheme ──────────────────────────────────────────
+private val LightColorScheme = lightColorScheme(
+    primary              = SeaGreen40,
+    onPrimary            = Color.White,
+    primaryContainer     = SeaGreen90,
+    onPrimaryContainer   = SeaGreen10,
+
+    secondary            = Secondary40,
+    onSecondary          = Color.White,
+    secondaryContainer   = Secondary90,
+    onSecondaryContainer = Secondary10,
+
+    tertiary             = Tertiary40,
+    onTertiary           = Color.White,
+    tertiaryContainer    = Tertiary90,
+    onTertiaryContainer  = Tertiary10,
+
+    error                = Error40,
+    onError              = Color.White,
+    errorContainer       = Error90,
+    onErrorContainer     = Error10,
+
+    background           = Neutral99,
+    onBackground         = Neutral10,
+    surface              = Neutral99,
+    onSurface            = Neutral10,
+
+    surfaceVariant       = NeutralVar90,
+    onSurfaceVariant     = NeutralVar30,
+    outline              = NeutralVar50,
+    outlineVariant       = NeutralVar80,
+
+    inverseSurface       = Neutral20,
+    inverseOnSurface     = Neutral95,
+    inversePrimary       = SeaGreen80,
+
+    surfaceTint          = SeaGreen40,
 )
 
-private val LightColorScheme = lightColorScheme(
-    primary = MossGreen,
-    secondary = SkyBlue,
-    background = LightBackground,
-    surface = LightSurface,
-    surfaceVariant = LightSurfaceVariant,
-    onBackground = LightOnBackground,
-    onSurface = LightOnSurface,
-    onSurfaceVariant = LightOnSurfaceVariant,
-    error = ErrorRed,
-    outline = LightBorder,
-    primaryContainer = MossGreen.copy(alpha = 0.1f),
-    onPrimaryContainer = MossGreen,
+// ── MD3 Dark Color Scheme ───────────────────────────────────────────
+private val DarkColorScheme = darkColorScheme(
+    primary              = SeaGreen80,
+    onPrimary            = SeaGreen20,
+    primaryContainer     = SeaGreen30,
+    onPrimaryContainer   = SeaGreen90,
+
+    secondary            = Secondary80,
+    onSecondary          = Secondary20,
+    secondaryContainer   = Secondary30,
+    onSecondaryContainer = Secondary90,
+
+    tertiary             = Tertiary80,
+    onTertiary           = Tertiary20,
+    tertiaryContainer    = Tertiary30,
+    onTertiaryContainer  = Tertiary90,
+
+    error                = Error80,
+    onError              = Error20,
+    errorContainer       = Error30,
+    onErrorContainer     = Error90,
+
+    background           = Neutral6,
+    onBackground         = Neutral90,
+    surface              = Neutral6,
+    onSurface            = Neutral90,
+
+    surfaceVariant       = NeutralVar30,
+    onSurfaceVariant     = NeutralVar80,
+    outline              = NeutralVar60,
+    outlineVariant       = NeutralVar30,
+
+    inverseSurface       = Neutral90,
+    inverseOnSurface     = Neutral20,
+    inversePrimary       = SeaGreen40,
+
+    surfaceTint          = SeaGreen80,
 )
 
 @Composable

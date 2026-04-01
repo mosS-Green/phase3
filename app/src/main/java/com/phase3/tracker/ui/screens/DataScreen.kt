@@ -1,8 +1,7 @@
 package com.phase3.tracker.ui.screens
 
 import androidx.compose.animation.animateContentSize
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -19,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.phase3.tracker.model.Tower
 import com.phase3.tracker.ui.theme.StatusComplete
+import com.phase3.tracker.ui.theme.StatusCompleteDark
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -45,7 +45,7 @@ fun DataScreen(
                         onUpload()
                     }
                 ) {
-                    Text("Upload", color = MaterialTheme.colorScheme.primary)
+                    Text("Upload")
                 }
             },
             dismissButton = {
@@ -53,8 +53,7 @@ fun DataScreen(
                     Text("Cancel")
                 }
             },
-            containerColor = MaterialTheme.colorScheme.surface,
-            shape = RoundedCornerShape(16.dp)
+            shape = RoundedCornerShape(28.dp)
         )
     }
 
@@ -64,10 +63,7 @@ fun DataScreen(
                 title = {
                     Text(
                         "Towers",
-                        style = MaterialTheme.typography.headlineMedium.copy(
-                            fontWeight = FontWeight.Light,
-                            letterSpacing = (-1).sp
-                        )
+                        style = MaterialTheme.typography.titleLarge
                     )
                 },
                 navigationIcon = {
@@ -96,29 +92,30 @@ fun DataScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background
+                    containerColor = MaterialTheme.colorScheme.surface
                 )
             )
         },
         floatingActionButton = {
             ExtendedFloatingActionButton(
                 onClick = { showUploadDialog = true },
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.background,
+                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                 icon = {
                     if (isUploading) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(20.dp),
                             strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.background
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
                     } else {
                         Icon(Icons.Default.CloudUpload, contentDescription = null)
                     }
                 },
-                text = { Text(if (isUploading) "Uploading..." else "Upload") }
+                text = { Text(if (isUploading) "Uploading…" else "Upload") }
             )
-        }
+        },
+        containerColor = MaterialTheme.colorScheme.surface
     ) { padding ->
         Column(
             modifier = Modifier
@@ -145,17 +142,21 @@ private fun TowerCard(
     onClick: () -> Unit
 ) {
     val completion = tower.overallCompletion
+    val isDark = isSystemInDarkTheme()
+    val completeColor = if (isDark) StatusCompleteDark else StatusComplete
 
-    Card(
+    ElevatedCard(
+        onClick = onClick,
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
             .animateContentSize(),
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
         ),
-        border = CardDefaults.outlinedCardBorder()
+        elevation = CardDefaults.elevatedCardElevation(
+            defaultElevation = 1.dp
+        )
     ) {
         Column(
             modifier = Modifier
@@ -164,13 +165,10 @@ private fun TowerCard(
         ) {
             Text(
                 tower.name,
-                style = MaterialTheme.typography.headlineSmall.copy(
-                    fontWeight = FontWeight.Light,
-                    letterSpacing = (-0.5).sp
-                )
+                style = MaterialTheme.typography.headlineSmall
             )
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -186,9 +184,7 @@ private fun TowerCard(
                     )
                     Text(
                         "${tower.activities.size}",
-                        style = MaterialTheme.typography.titleLarge.copy(
-                            fontWeight = FontWeight.Light
-                        )
+                        style = MaterialTheme.typography.titleLarge
                     )
                 }
                 Column(horizontalAlignment = Alignment.End) {
@@ -202,8 +198,7 @@ private fun TowerCard(
                     Text(
                         "${completion.toInt()}%",
                         style = MaterialTheme.typography.titleLarge.copy(
-                            fontWeight = FontWeight.Light,
-                            color = StatusComplete
+                            color = completeColor
                         )
                     )
                 }
@@ -211,15 +206,14 @@ private fun TowerCard(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Progress bar
             LinearProgressIndicator(
                 progress = { completion / 100f },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(4.dp)
                     .clip(RoundedCornerShape(2.dp)),
-                color = StatusComplete,
-                trackColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
+                color = completeColor,
+                trackColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
             )
         }
     }
