@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -30,7 +31,9 @@ import com.phase3.tracker.ui.theme.*
 @Composable
 fun HomeScreen(
     towers: List<Tower>,
+    isDownloading: Boolean,
     onNavigateToData: () -> Unit,
+    onDownload: () -> Unit,
     onActivityClick: (towerIndex: Int, activityIndex: Int) -> Unit
 ) {
     var selectedTowerIndex by remember { mutableIntStateOf(0) }
@@ -54,12 +57,32 @@ fun HomeScreen(
             )
         },
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = onNavigateToData,
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.background
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                Icon(Icons.Default.Edit, contentDescription = "Data")
+                FloatingActionButton(
+                    onClick = onDownload,
+                    containerColor = MaterialTheme.colorScheme.secondary,
+                    contentColor = MaterialTheme.colorScheme.onSecondary
+                ) {
+                    if (isDownloading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onSecondary
+                        )
+                    } else {
+                        Icon(Icons.Default.CloudDownload, contentDescription = "Download")
+                    }
+                }
+                FloatingActionButton(
+                    onClick = onNavigateToData,
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.background
+                ) {
+                    Icon(Icons.Default.Edit, contentDescription = "Data")
+                }
             }
         }
     ) { padding ->

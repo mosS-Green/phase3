@@ -3,13 +3,13 @@ package com.phase3.tracker.ui.theme
 import androidx.compose.ui.graphics.Color
 
 // Primary palette (To-Leaflet inspired)
-val MossGreen = Color(0xFF9DC183)
-val SkyBlue = Color(0xFF87CEFA)
+val MossGreen = Color(0xFFA5D6A7) // Pastel Green
+val SkyBlue = Color(0xFF90CAF9)   // Pastel Blue
 
 // Dark mode
-val DarkBackground = Color(0xFF000000)
-val DarkSurface = Color(0xFF0A0A0A)
-val DarkSurfaceVariant = Color(0xFF141414)
+val DarkBackground = Color(0xFF121212)
+val DarkSurface = Color(0xFF1E1E1E)
+val DarkSurfaceVariant = Color(0xFF2C2C2C)
 val DarkOnBackground = Color(0xFFF8FAFC)
 val DarkOnSurface = Color(0xFFF8FAFC)
 val DarkOnSurfaceVariant = Color(0xFF64748B)
@@ -25,15 +25,15 @@ val LightOnSurfaceVariant = Color(0xFF64748B)
 val LightBorder = Color(0x1A000000)
 
 // Status colors
-val StatusComplete = Color(0xFF4CAF50)
-val StatusWip = Color(0xFFFFC107)
-val StatusEmpty = Color(0xFFF44336)
+val StatusComplete = Color(0xFFA5D6A7) // Pastel Green
+val StatusWip = Color(0xFFFFE082) // Pastel Amber
+val StatusEmpty = Color(0xFFEF9A9A) // Pastel Red
 
 // Activity group colors
-val GroupApartments = Color(0xFF4FC3F7)
-val GroupHandingOver = Color(0xFFFFB74D)
-val GroupCommonArea = Color(0xFFAED581)
-val GroupFacade = Color(0xFFCE93D8)
+val GroupApartments = Color(0xFF81D4FA) // Pastel Light Blue
+val GroupHandingOver = Color(0xFFFFCC80) // Pastel Orange
+val GroupCommonArea = Color(0xFFC5E1A5) // Pastel Light Green
+val GroupFacade = Color(0xFFE1BEE7) // Pastel Purple
 
 val GroupColors = listOf(GroupApartments, GroupHandingOver, GroupCommonArea, GroupFacade)
 

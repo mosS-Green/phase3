@@ -37,7 +37,9 @@ fun AppNavigation(viewModel: MainViewModel) {
         composable(Screen.Home.route) {
             HomeScreen(
                 towers = towers,
+                isDownloading = isDownloading,
                 onNavigateToData = { navController.navigate(Screen.Data.route) },
+                onDownload = { viewModel.downloadFromTelegram() },
                 onActivityClick = { towerIndex, activityIndex ->
                     navController.navigate(Screen.Activity.createRoute(towerIndex, activityIndex))
                 }
