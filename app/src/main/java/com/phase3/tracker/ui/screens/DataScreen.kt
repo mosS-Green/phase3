@@ -24,39 +24,11 @@ import com.phase3.tracker.ui.theme.StatusCompleteDark
 @Composable
 fun DataScreen(
     towers: List<Tower>,
-    isUploading: Boolean,
     isDownloading: Boolean,
     onTowerClick: (Int) -> Unit,
-    onUpload: () -> Unit,
     onDownload: () -> Unit,
     onBack: () -> Unit
 ) {
-    var showUploadDialog by remember { mutableStateOf(false) }
-
-    if (showUploadDialog) {
-        AlertDialog(
-            onDismissRequest = { showUploadDialog = false },
-            title = { Text("Upload Changes") },
-            text = { Text("Upload the current Excel file to Telegram?") },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showUploadDialog = false
-                        onUpload()
-                    }
-                ) {
-                    Text("Upload")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showUploadDialog = false }) {
-                    Text("Cancel")
-                }
-            },
-            shape = RoundedCornerShape(28.dp)
-        )
-    }
-
     Scaffold(
         topBar = {
             TopAppBar(
@@ -85,7 +57,7 @@ fun DataScreen(
                         } else {
                             Icon(
                                 Icons.Default.CloudDownload,
-                                contentDescription = "Download from Telegram",
+                                contentDescription = "Sync from Google Sheets",
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
@@ -94,25 +66,6 @@ fun DataScreen(
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface
                 )
-            )
-        },
-        floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = { showUploadDialog = true },
-                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                icon = {
-                    if (isUploading) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(20.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                    } else {
-                        Icon(Icons.Default.CloudUpload, contentDescription = null)
-                    }
-                },
-                text = { Text(if (isUploading) "Uploading…" else "Upload") }
             )
         },
         containerColor = MaterialTheme.colorScheme.surface

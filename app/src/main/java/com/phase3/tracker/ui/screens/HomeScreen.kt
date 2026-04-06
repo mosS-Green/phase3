@@ -72,7 +72,7 @@ fun HomeScreen(
                     } else {
                         Icon(
                             Icons.Default.CloudDownload,
-                            contentDescription = "Download from Telegram"
+                            contentDescription = "Sync from Google Sheets"
                         )
                     }
                 }

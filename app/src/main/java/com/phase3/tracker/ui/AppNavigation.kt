@@ -29,7 +29,6 @@ sealed class Screen(val route: String) {
 fun AppNavigation(viewModel: MainViewModel) {
     val navController = rememberNavController()
     val towers by viewModel.towers.collectAsStateWithLifecycle()
-    val isUploading by viewModel.isUploading.collectAsStateWithLifecycle()
     val isDownloading by viewModel.isDownloading.collectAsStateWithLifecycle()
 
     NavHost(navController = navController, startDestination = Screen.Home.route) {
@@ -39,7 +38,7 @@ fun AppNavigation(viewModel: MainViewModel) {
                 towers = towers,
                 isDownloading = isDownloading,
                 onNavigateToData = { navController.navigate(Screen.Data.route) },
-                onDownload = { viewModel.downloadFromTelegram() },
+                onDownload = { viewModel.downloadFromGoogleSheets() },
                 onActivityClick = { towerIndex, activityIndex ->
                     navController.navigate(Screen.Activity.createRoute(towerIndex, activityIndex))
                 }
@@ -49,13 +48,11 @@ fun AppNavigation(viewModel: MainViewModel) {
         composable(Screen.Data.route) {
             DataScreen(
                 towers = towers,
-                isUploading = isUploading,
                 isDownloading = isDownloading,
                 onTowerClick = { towerIndex ->
                     navController.navigate(Screen.Tower.createRoute(towerIndex))
                 },
-                onUpload = { viewModel.uploadToTelegram() },
-                onDownload = { viewModel.downloadFromTelegram() },
+                onDownload = { viewModel.downloadFromGoogleSheets() },
                 onBack = { navController.popBackStack() }
             )
         }
