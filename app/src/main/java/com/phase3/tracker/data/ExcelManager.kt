@@ -13,12 +13,11 @@ class ExcelManager {
 
     private var workbook: Workbook? = null
 
-    // Floor 2 = cols 3-6, Floor 3 = cols 7-10, ..., Floor F = cols (F-2)*4+3 to (F-2)*4+6
-    // Flat number = Floor*100 + (1..4)
-
     companion object {
         private const val FIRST_DATA_ROW = 3  // Row 3 is first activity
-        private const val FLAT_START_COL = 2  // 0-indexed, column C = index 2
+        private const val CONTRACTOR_COL = 2  // Column C (0-indexed)
+        private const val CATEGORY_COL = 3    // Column D (0-indexed)
+        private const val FLAT_START_COL = 4  // Column E (0-indexed) — shifted by 2 for new Contractor+Category cols
         private const val FLATS_PER_FLOOR = 4
         private const val FIRST_FLOOR = 2
         private const val LAST_FLOOR = 34
@@ -47,6 +46,16 @@ class ExcelManager {
         return parseTowers()
     }
 
+    private fun getCellString(row: org.apache.poi.ss.usermodel.Row?, colIdx: Int): String? {
+        val cell = row?.getCell(colIdx) ?: return null
+        return when (cell.cellType) {
+            CellType.STRING -> cell.stringCellValue?.trim()
+            CellType.NUMERIC -> cell.numericCellValue.toString()
+            CellType.BLANK -> null
+            else -> cell.toString().trim().ifEmpty { null }
+        }
+    }
+
     private fun parseTowers(): List<Tower> {
         val wb = workbook ?: return emptyList()
         val towers = mutableListOf<Tower>()
@@ -57,7 +66,6 @@ class ExcelManager {
             val sheet = wb.getSheet(sheetName) ?: continue
             val activities = mutableListOf<Activity>()
 
-            // Determine last activity row
             val lastRow = sheet.lastRowNum
 
             for (rowIdx in (FIRST_DATA_ROW - 1)..lastRow) {
@@ -68,6 +76,11 @@ class ExcelManager {
 
                 val excelRow = rowIdx + 1 // Convert to 1-based
                 val group = Tower.groupForRow(excelRow)
+
+                // Read contractor (column C) and category (column D)
+                val contractor = getCellString(row, CONTRACTOR_COL) ?: ""
+                val categoryRaw = getCellString(row, CATEGORY_COL) ?: ""
+                val categories = Activity.parseCategories(categoryRaw)
 
                 val statuses = mutableMapOf<Int, FlatStatus>()
                 for (flatNum in FLAT_NUMBERS) {
@@ -87,6 +100,8 @@ class ExcelManager {
                         rowIndex = excelRow,
                         groupName = group?.name ?: "Other",
                         groupIndex = group?.index ?: 0,
+                        contractor = contractor,
+                        categories = categories,
                         statuses = statuses
                     )
                 )
@@ -113,24 +128,34 @@ class ExcelManager {
         }
     }
 
-    fun addActivity(sheetName: String, activityName: String): Int {
+    fun addActivity(sheetName: String, activityName: String, contractor: String, categoryStr: String): Int {
         val wb = workbook ?: return -1
         val sheet = wb.getSheet(sheetName) ?: return -1
 
         val newRowIdx = sheet.lastRowNum + 1
         val row = sheet.createRow(newRowIdx)
-        val nameCell = row.createCell(1) // Column B
-        nameCell.setCellValue(activityName)
+
+        // Column B - activity name
+        row.createCell(1).setCellValue(activityName)
+        // Column C - contractor
+        row.createCell(CONTRACTOR_COL).setCellValue(contractor)
+        // Column D - category
+        row.createCell(CATEGORY_COL).setCellValue(categoryStr)
 
         return newRowIdx + 1 // Return 1-based row number
     }
 
-    fun renameActivity(sheetName: String, activityRow: Int, newName: String) {
+    fun renameActivity(sheetName: String, activityRow: Int, newName: String, contractor: String, categoryStr: String) {
         val wb = workbook ?: return
         val sheet = wb.getSheet(sheetName) ?: return
         val row = sheet.getRow(activityRow - 1) ?: return
-        val cell = row.getCell(1) ?: row.createCell(1)
-        cell.setCellValue(newName)
+
+        // Column B - name
+        (row.getCell(1) ?: row.createCell(1)).setCellValue(newName)
+        // Column C - contractor
+        (row.getCell(CONTRACTOR_COL) ?: row.createCell(CONTRACTOR_COL)).setCellValue(contractor)
+        // Column D - category
+        (row.getCell(CATEGORY_COL) ?: row.createCell(CATEGORY_COL)).setCellValue(categoryStr)
     }
 
     fun saveWorkbook(outputStream: OutputStream) {

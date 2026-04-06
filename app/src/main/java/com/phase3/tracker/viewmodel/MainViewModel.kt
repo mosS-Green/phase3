@@ -1,6 +1,12 @@
 package com.phase3.tracker.viewmodel
 
 import android.app.Application
+import android.content.ContentValues
+import android.graphics.Bitmap
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.phase3.tracker.data.ExcelManager
@@ -36,6 +42,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isDownloading = MutableStateFlow(false)
     val isDownloading: StateFlow<Boolean> = _isDownloading.asStateFlow()
 
+    // Sync queue tracking
+    private val _isSyncing = MutableStateFlow(false)
+    val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
+
+    private val _syncDone = MutableStateFlow(false)
+    val syncDone: StateFlow<Boolean> = _syncDone.asStateFlow()
+
+    private var pendingSyncCount = 0
+    private val syncCountLock = Any()
+
+    // Filter states
+    enum class StatusFilter { COMPLETED, ONGOING, EMPTY }
+
+    private val _selectedStatusFilters = MutableStateFlow(setOf(StatusFilter.ONGOING))
+    val selectedStatusFilters: StateFlow<Set<StatusFilter>> = _selectedStatusFilters.asStateFlow()
+
+    private val _selectedCategories = MutableStateFlow<Set<String>>(emptySet())
+    val selectedCategories: StateFlow<Set<String>> = _selectedCategories.asStateFlow()
+
+    private val _selectedContractor = MutableStateFlow("All")
+    val selectedContractor: StateFlow<String> = _selectedContractor.asStateFlow()
+
     private val excelFile: File
         get() = File(getApplication<Application>().filesDir, "Ph-03 Tower Internal Finishing Work.xlsx")
 
@@ -49,39 +77,62 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             for (request in updateChannel) {
                 try {
-                    delay(50) // Tiny delay for sequential safety against API concurrent limits
+                    delay(50)
                     val result = googleSync.updateCell(request.sheetName, request.row, request.col, request.value)
                     result.onFailure {
                         _statusMessage.value = "Sync failed: ${it.message}"
                     }
                 } catch (e: Exception) {
                     _statusMessage.value = "Sync queue error: ${e.message}"
+                } finally {
+                    val remaining = synchronized(syncCountLock) {
+                        pendingSyncCount--
+                        pendingSyncCount
+                    }
+                    if (remaining <= 0) {
+                        _isSyncing.value = false
+                        _syncDone.value = true
+                        // Reset the done indicator after a delay
+                        viewModelScope.launch {
+                            delay(3000)
+                            _syncDone.value = false
+                        }
+                    }
                 }
             }
         }
     }
 
+    private fun enqueueUpdate(sheetName: String, row: Int, col: Int, value: String) {
+        synchronized(syncCountLock) {
+            pendingSyncCount++
+        }
+        _isSyncing.value = true
+        _syncDone.value = false
+        updateChannel.trySend(UpdateRequest(sheetName, row, col, value))
+    }
+
     fun loadExcel() {
         viewModelScope.launch {
-            _isLoading.value = true
             try {
-                withContext(Dispatchers.IO) {
-                    if (!excelFile.exists()) {
-                        val assets = getApplication<Application>().assets
-                        assets.open("Ph-03 Tower Internal Finishing Work.xlsx").use { input ->
-                            FileOutputStream(excelFile).use { output ->
-                                input.copyTo(output)
-                            }
+                if (excelFile.exists()) {
+                    // Load cached data immediately
+                    withContext(Dispatchers.IO) {
+                        val towers = excelFile.inputStream().use { stream ->
+                            excelManager.loadWorkbook(stream)
                         }
+                        _towers.value = towers
                     }
-                    val towers = excelFile.inputStream().use { stream ->
-                        excelManager.loadWorkbook(stream)
-                    }
-                    _towers.value = towers
+                    _isLoading.value = false
+                    // Background sync from Google Sheets
+                    downloadFromGoogleSheets(silent = true)
+                } else {
+                    // First boot: download from Google Sheets
+                    _isLoading.value = true
+                    downloadFromGoogleSheets(silent = false)
                 }
             } catch (e: Exception) {
                 _statusMessage.value = "Error loading local data: ${e.message}"
-            } finally {
                 _isLoading.value = false
             }
         }
@@ -105,15 +156,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val newTower = tower.copy(activities = newActivities)
         towersList[towerIndex] = newTower
 
-        // Recompose instantly
         _towers.value = towersList.toList()
 
-        // Persistent update in background via Webhook
         val colIdx = ExcelManager.flatToColIndex(flatNumber)
         val value = newStatus.toExcelValue() ?: ""
-        updateChannel.trySend(UpdateRequest(tower.sheetName, activity.rowIndex, colIdx + 1, value))
+        enqueueUpdate(tower.sheetName, activity.rowIndex, colIdx + 1, value)
         
-        // Optionally update local POI state (we no longer save `saveExcelAsync()` to prevent lag/crashing)
         excelManager.updateStatus(tower.sheetName, activity.rowIndex, flatNumber, newStatus)
     }
 
@@ -138,7 +186,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             
             val colIdx = ExcelManager.flatToColIndex(flatNum)
             val value = targetStatus.toExcelValue() ?: ""
-            updateChannel.trySend(UpdateRequest(tower.sheetName, activity.rowIndex, colIdx + 1, value))
+            enqueueUpdate(tower.sheetName, activity.rowIndex, colIdx + 1, value)
             excelManager.updateStatus(tower.sheetName, activity.rowIndex, flatNum, targetStatus)
         }
 
@@ -152,12 +200,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _towers.value = towersList.toList()
     }
 
-    fun addActivity(towerIndex: Int, activityName: String) {
+    fun addActivity(towerIndex: Int, activityName: String, contractor: String = "", categories: List<String> = emptyList()) {
         viewModelScope.launch {
             val towersList = _towers.value.toMutableList()
             val tower = towersList.getOrNull(towerIndex) ?: return@launch
+            val categoryStr = Activity.serializeCategories(categories)
             withContext(Dispatchers.IO) {
-                val newRow = excelManager.addActivity(tower.sheetName, activityName)
+                val newRow = excelManager.addActivity(tower.sheetName, activityName, contractor, categoryStr)
                 if (newRow > 0) {
                     val group = Tower.groupForRow(newRow)
                     val statuses = mutableMapOf<Int, FlatStatus>()
@@ -168,6 +217,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         rowIndex = newRow,
                         groupName = group?.name ?: "Other",
                         groupIndex = group?.index ?: 0,
+                        contractor = contractor,
+                        categories = categories,
                         statuses = statuses
                     )
                     
@@ -177,25 +228,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                     _towers.value = towersList.toList()
                     
-                    // Webhook append doesn't naturally support "add column" structural changes perfectly in this basic payload
-                    // but we push it if Apps Script handles an updateCell gracefully or appendRow.
-                    // For now, we update the cell holding the activity name
-                    updateChannel.trySend(UpdateRequest(tower.sheetName, newRow, 2, activityName)) // col B is 2
+                    // Push name, contractor, category to Google Sheets
+                    enqueueUpdate(tower.sheetName, newRow, 2, activityName) // col B
+                    enqueueUpdate(tower.sheetName, newRow, 3, contractor) // col C
+                    enqueueUpdate(tower.sheetName, newRow, 4, categoryStr) // col D
                 }
             }
             _statusMessage.value = "Activity added: $activityName"
         }
     }
 
-    fun renameActivity(towerIndex: Int, activityIndex: Int, newName: String) {
+    fun renameActivity(towerIndex: Int, activityIndex: Int, newName: String, contractor: String = "", categories: List<String> = emptyList()) {
         viewModelScope.launch {
             val towersList = _towers.value.toMutableList()
             val tower = towersList.getOrNull(towerIndex) ?: return@launch
             val activity = tower.activities.getOrNull(activityIndex) ?: return@launch
+            val categoryStr = Activity.serializeCategories(categories)
             withContext(Dispatchers.IO) {
-                excelManager.renameActivity(tower.sheetName, activity.rowIndex, newName)
+                excelManager.renameActivity(tower.sheetName, activity.rowIndex, newName, contractor, categoryStr)
                 
-                val newActivity = activity.copy(name = newName)
+                val newActivity = activity.copy(
+                    name = newName,
+                    contractor = contractor,
+                    categories = categories
+                )
                 val newActivities = tower.activities.toMutableList()
                 newActivities[activityIndex] = newActivity
                 val newTower = tower.copy(activities = newActivities)
@@ -203,14 +259,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 
                 _towers.value = towersList.toList()
                 
-                // Column B (1-indexed is 2) holds activity names
-                updateChannel.trySend(UpdateRequest(tower.sheetName, activity.rowIndex, 2, newName))
+                // Push changes
+                enqueueUpdate(tower.sheetName, activity.rowIndex, 2, newName) // col B
+                enqueueUpdate(tower.sheetName, activity.rowIndex, 3, contractor) // col C
+                enqueueUpdate(tower.sheetName, activity.rowIndex, 4, categoryStr) // col D
             }
-            _statusMessage.value = "Renamed to: $newName"
+            _statusMessage.value = "Updated: $newName"
         }
     }
 
-    fun downloadFromGoogleSheets() {
+    fun downloadFromGoogleSheets(silent: Boolean = false) {
         viewModelScope.launch {
             _isDownloading.value = true
             try {
@@ -219,18 +277,127 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     onSuccess = { bytes ->
                         withContext(Dispatchers.IO) {
                             excelFile.writeBytes(bytes)
+                            val towers = excelFile.inputStream().use { stream ->
+                                excelManager.loadWorkbook(stream)
+                            }
+                            _towers.value = towers
                         }
-                        // Reload data into UI
-                        loadExcel()
-                        _statusMessage.value = "Google Sheet Synced!"
+                        if (!silent) {
+                            _statusMessage.value = "Google Sheet Synced!"
+                        }
                     },
-                    onFailure = { _statusMessage.value = "Download failed: ${it.message}" }
+                    onFailure = {
+                        if (!silent) {
+                            _statusMessage.value = "Download failed: ${it.message}"
+                        }
+                    }
                 )
             } catch (e: Exception) {
-                _statusMessage.value = "Download error: ${e.message}"
+                if (!silent) {
+                    _statusMessage.value = "Download error: ${e.message}"
+                }
             } finally {
                 _isDownloading.value = false
+                _isLoading.value = false
             }
+        }
+    }
+
+    fun saveExcelToDownloads(): Uri? {
+        val app = getApplication<Application>()
+        try {
+            if (!excelFile.exists()) return null
+
+            val fileName = "Phase3_${System.currentTimeMillis()}.xlsx"
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val contentValues = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                    put(MediaStore.Downloads.MIME_TYPE, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                    put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                }
+                val uri = app.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+                uri?.let {
+                    app.contentResolver.openOutputStream(it)?.use { out ->
+                        excelFile.inputStream().use { inp -> inp.copyTo(out) }
+                    }
+                }
+                _statusMessage.value = "Saved to Downloads: $fileName"
+                return uri
+            } else {
+                @Suppress("DEPRECATION")
+                val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                val outFile = File(downloadsDir, fileName)
+                excelFile.inputStream().use { inp ->
+                    FileOutputStream(outFile).use { out -> inp.copyTo(out) }
+                }
+                _statusMessage.value = "Saved to Downloads: $fileName"
+                return Uri.fromFile(outFile)
+            }
+        } catch (e: Exception) {
+            _statusMessage.value = "Save failed: ${e.message}"
+            return null
+        }
+    }
+
+    // Filter functions
+    fun toggleStatusFilter(filter: StatusFilter) {
+        val current = _selectedStatusFilters.value.toMutableSet()
+        if (current.contains(filter)) {
+            current.remove(filter)
+        } else {
+            current.add(filter)
+        }
+        _selectedStatusFilters.value = current
+    }
+
+    fun toggleCategoryFilter(category: String) {
+        val current = _selectedCategories.value.toMutableSet()
+        if (current.contains(category)) {
+            current.remove(category)
+        } else {
+            current.add(category)
+        }
+        _selectedCategories.value = current
+    }
+
+    fun setContractorFilter(contractor: String) {
+        _selectedContractor.value = contractor
+    }
+
+    /** Get all unique contractors across all towers */
+    fun getAllContractors(): List<String> {
+        return _towers.value
+            .flatMap { it.activities }
+            .map { it.contractor }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .sorted()
+    }
+
+    /** Apply filters to get the filtered list of activities for a tower */
+    fun getFilteredActivities(tower: Tower): List<Activity> {
+        val statusFilters = _selectedStatusFilters.value
+        val categoryFilters = _selectedCategories.value
+        val contractor = _selectedContractor.value
+
+        return tower.activities.filter { activity ->
+            // Status filter
+            val statusMatch = statusFilters.isEmpty() || statusFilters.any { filter ->
+                when (filter) {
+                    StatusFilter.COMPLETED -> activity.isFullyComplete
+                    StatusFilter.ONGOING -> activity.isOngoing
+                    StatusFilter.EMPTY -> activity.isFullyEmpty
+                }
+            }
+
+            // Category filter (multi-select: show if activity has ANY selected category)
+            val categoryMatch = categoryFilters.isEmpty() || activity.categories.any { it in categoryFilters }
+
+            // Contractor filter (single-select)
+            val contractorMatch = contractor == "All" || activity.contractor.equals(contractor, ignoreCase = true)
+
+            statusMatch && categoryMatch && contractorMatch
         }
     }
 

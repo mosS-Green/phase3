@@ -5,6 +5,8 @@ data class Activity(
     val rowIndex: Int,           // Excel row (3-based)
     val groupName: String,
     val groupIndex: Int,         // 0-3 for color coding
+    val contractor: String = "",
+    val categories: List<String> = emptyList(),
     val statuses: MutableMap<Int, FlatStatus>  // flatNumber -> status
 ) {
     val completionPercent: Float
@@ -36,4 +38,23 @@ data class Activity(
 
     val isOngoing: Boolean
         get() = !isFullyComplete && !isFullyEmpty
+
+    companion object {
+        /** Parse pipe-delimited or comma-delimited category string into a list */
+        fun parseCategories(raw: String?): List<String> {
+            if (raw.isNullOrBlank()) return emptyList()
+            return raw.split("|", ",")
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+        }
+
+        /** Serialize category list to pipe-delimited string for Excel */
+        fun serializeCategories(categories: List<String>): String {
+            return categories.joinToString(" | ")
+        }
+
+        val VALID_CATEGORIES = listOf(
+            "Int. Flat", "Lobby", "Shaft", "Staircase", "Civil", "MEP", "Ext. Works"
+        )
+    }
 }

@@ -30,6 +30,11 @@ fun AppNavigation(viewModel: MainViewModel) {
     val navController = rememberNavController()
     val towers by viewModel.towers.collectAsStateWithLifecycle()
     val isDownloading by viewModel.isDownloading.collectAsStateWithLifecycle()
+    val isSyncing by viewModel.isSyncing.collectAsStateWithLifecycle()
+    val syncDone by viewModel.syncDone.collectAsStateWithLifecycle()
+    val selectedStatusFilters by viewModel.selectedStatusFilters.collectAsStateWithLifecycle()
+    val selectedCategories by viewModel.selectedCategories.collectAsStateWithLifecycle()
+    val selectedContractor by viewModel.selectedContractor.collectAsStateWithLifecycle()
 
     NavHost(navController = navController, startDestination = Screen.Home.route) {
 
@@ -37,11 +42,22 @@ fun AppNavigation(viewModel: MainViewModel) {
             HomeScreen(
                 towers = towers,
                 isDownloading = isDownloading,
+                isSyncing = isSyncing,
+                syncDone = syncDone,
+                selectedStatusFilters = selectedStatusFilters,
+                selectedCategories = selectedCategories,
+                selectedContractor = selectedContractor,
+                allContractors = viewModel.getAllContractors(),
                 onNavigateToData = { navController.navigate(Screen.Data.route) },
                 onDownload = { viewModel.downloadFromGoogleSheets() },
+                onSaveToDownloads = { viewModel.saveExcelToDownloads() },
+                onToggleStatusFilter = { viewModel.toggleStatusFilter(it) },
+                onToggleCategoryFilter = { viewModel.toggleCategoryFilter(it) },
+                onSetContractorFilter = { viewModel.setContractorFilter(it) },
                 onActivityClick = { towerIndex, activityIndex ->
                     navController.navigate(Screen.Activity.createRoute(towerIndex, activityIndex))
-                }
+                },
+                getFilteredActivities = { viewModel.getFilteredActivities(it) }
             )
         }
 
@@ -71,9 +87,11 @@ fun AppNavigation(viewModel: MainViewModel) {
                     onActivityClick = { activityIndex ->
                         navController.navigate(Screen.Activity.createRoute(towerIndex, activityIndex))
                     },
-                    onAddActivity = { name -> viewModel.addActivity(towerIndex, name) },
-                    onRenameActivity = { actIndex, newName ->
-                        viewModel.renameActivity(towerIndex, actIndex, newName)
+                    onAddActivity = { name, contractor, categories ->
+                        viewModel.addActivity(towerIndex, name, contractor, categories)
+                    },
+                    onRenameActivity = { actIndex, newName, contractor, categories ->
+                        viewModel.renameActivity(towerIndex, actIndex, newName, contractor, categories)
                     },
                     onBack = { navController.popBackStack() }
                 )
