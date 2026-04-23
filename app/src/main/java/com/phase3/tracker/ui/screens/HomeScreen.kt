@@ -2,7 +2,9 @@ package com.phase3.tracker.ui.screens
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -16,7 +18,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -26,30 +27,189 @@ import com.phase3.tracker.model.Tower
 import com.phase3.tracker.ui.theme.*
 import com.phase3.tracker.viewmodel.MainViewModel
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun HomeScreen(
     towers: List<Tower>,
     isDownloading: Boolean,
-    isSyncing: Boolean,
-    syncDone: Boolean,
+    editMode: Boolean,
     selectedStatusFilters: Set<MainViewModel.StatusFilter>,
     selectedCategories: Set<String>,
     selectedContractor: String,
     allContractors: List<String>,
+    allGroupNames: List<String>,
     onNavigateToData: () -> Unit,
     onDownload: () -> Unit,
     onSaveToDownloads: () -> Unit,
     onToggleStatusFilter: (MainViewModel.StatusFilter) -> Unit,
     onToggleCategoryFilter: (String) -> Unit,
     onSetContractorFilter: (String) -> Unit,
+    onToggleEditMode: () -> Unit,
+    onSetEditMode: (Boolean) -> Unit,
     onActivityClick: (towerIndex: Int, activityIndex: Int) -> Unit,
+    onAddActivity: (towerIndex: Int, name: String, contractor: String, categories: List<String>, groupName: String, usePercentage: Boolean) -> Unit,
+    onRenameActivity: (towerIndex: Int, activityIndex: Int, newName: String, contractor: String, categories: List<String>, groupName: String, usePercentage: Boolean) -> Unit,
     getFilteredActivities: (Tower) -> List<Activity>
 ) {
     var selectedTowerIndex by remember { mutableIntStateOf(0) }
     var showStatusFilterMenu by remember { mutableStateOf(false) }
     var showCategoryFilterMenu by remember { mutableStateOf(false) }
     var showContractorFilterMenu by remember { mutableStateOf(false) }
+    var showSettingsSheet by remember { mutableStateOf(false) }
+
+    // Add Activity dialog state
+    var showAddDialog by remember { mutableStateOf(false) }
+    var addActivityName by remember { mutableStateOf("") }
+    var addContractor by remember { mutableStateOf("") }
+    var addCategories by remember { mutableStateOf<List<String>>(emptyList()) }
+    var addGroupName by remember { mutableStateOf("") }
+    var addUsePercentage by remember { mutableStateOf(false) }
+
+    // Rename Activity dialog state
+    var showRenameDialog by remember { mutableStateOf<Triple<Int, String, Activity?>?>(null) }
+    var renameText by remember { mutableStateOf("") }
+    var renameContractor by remember { mutableStateOf("") }
+    var renameCategories by remember { mutableStateOf<List<String>>(emptyList()) }
+    var renameGroupName by remember { mutableStateOf("") }
+    var renameUsePercentage by remember { mutableStateOf(false) }
+
+    // Settings bottom sheet
+    if (showSettingsSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showSettingsSheet = false },
+            containerColor = MaterialTheme.colorScheme.surface
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = 16.dp)
+                    .padding(bottom = 32.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Text(
+                    "Settings",
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+
+                HorizontalDivider()
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column {
+                        Text(
+                            "Edit Mode",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            if (editMode) "Editing enabled — tap cells to change status"
+                            else "View only — long press here to enable editing",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = editMode,
+                        onCheckedChange = { onSetEditMode(it) },
+                        colors = SwitchDefaults.colors(
+                            checkedTrackColor = MaterialTheme.colorScheme.primary,
+                            checkedThumbColor = MaterialTheme.colorScheme.onPrimary
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    // Add Activity dialog
+    if (showAddDialog) {
+        ActivityFormDialog(
+            title = "Add Activity",
+            nameValue = addActivityName,
+            onNameChange = { addActivityName = it },
+            contractorValue = addContractor,
+            onContractorChange = { addContractor = it },
+            categories = addCategories,
+            onCategoriesChange = { addCategories = it },
+            groupName = addGroupName,
+            onGroupNameChange = { addGroupName = it },
+            allGroupNames = allGroupNames,
+            usePercentage = addUsePercentage,
+            onUsePercentageChange = { addUsePercentage = it },
+            confirmLabel = "Add",
+            onConfirm = {
+                if (addActivityName.isNotBlank()) {
+                    onAddActivity(
+                        selectedTowerIndex,
+                        addActivityName.trim(),
+                        addContractor.trim(),
+                        addCategories,
+                        addGroupName.trim(),
+                        addUsePercentage
+                    )
+                    addActivityName = ""
+                    addContractor = ""
+                    addCategories = emptyList()
+                    addGroupName = ""
+                    addUsePercentage = false
+                    showAddDialog = false
+                }
+            },
+            onDismiss = {
+                showAddDialog = false
+                addActivityName = ""
+                addContractor = ""
+                addCategories = emptyList()
+                addGroupName = ""
+                addUsePercentage = false
+            }
+        )
+    }
+
+    // Rename Activity dialog
+    showRenameDialog?.let { (activityIndex, currentName, activity) ->
+        LaunchedEffect(currentName) {
+            renameText = currentName
+            renameContractor = activity?.contractor ?: ""
+            renameCategories = activity?.categories ?: emptyList()
+            renameGroupName = activity?.groupName ?: ""
+            renameUsePercentage = activity?.usePercentage ?: false
+        }
+        ActivityFormDialog(
+            title = "Edit Activity",
+            nameValue = renameText,
+            onNameChange = { renameText = it },
+            contractorValue = renameContractor,
+            onContractorChange = { renameContractor = it },
+            categories = renameCategories,
+            onCategoriesChange = { renameCategories = it },
+            groupName = renameGroupName,
+            onGroupNameChange = { renameGroupName = it },
+            allGroupNames = allGroupNames,
+            usePercentage = renameUsePercentage,
+            onUsePercentageChange = { renameUsePercentage = it },
+            confirmLabel = "Save",
+            onConfirm = {
+                if (renameText.isNotBlank()) {
+                    onRenameActivity(
+                        selectedTowerIndex,
+                        activityIndex,
+                        renameText.trim(),
+                        renameContractor.trim(),
+                        renameCategories,
+                        renameGroupName.trim(),
+                        renameUsePercentage
+                    )
+                    showRenameDialog = null
+                }
+            },
+            onDismiss = { showRenameDialog = null }
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -57,13 +217,14 @@ fun HomeScreen(
                 title = {
                     Text(
                         "Phase 3",
-                        style = MaterialTheme.typography.headlineMedium
+                        style = MaterialTheme.typography.headlineMedium,
+                        modifier = Modifier.combinedClickable(
+                            onClick = {},
+                            onLongClick = { showSettingsSheet = true }
+                        )
                     )
                 },
                 actions = {
-                    // ── Sync status indicator ────────────────────
-                    SyncStatusIndicator(isSyncing = isSyncing, syncDone = syncDone)
-
                     // ── Status filter ────────────────────────────
                     Box {
                         IconButton(onClick = { showStatusFilterMenu = true }) {
@@ -260,6 +421,17 @@ fun HomeScreen(
                     }
                 }
 
+                // ── Add Activity FAB (only in edit mode) ────────
+                if (editMode) {
+                    SmallFloatingActionButton(
+                        onClick = { showAddDialog = true },
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onTertiaryContainer
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = "Add Activity")
+                    }
+                }
+
                 // ── Edit / Data FAB (primary) ───────────────────
                 FloatingActionButton(
                     onClick = onNavigateToData,
@@ -343,64 +515,15 @@ fun HomeScreen(
                         val activityIndex = tower!!.activities.indexOf(activity)
                         ActivityProgressCard(
                             activity = activity,
-                            onClick = { onActivityClick(selectedTowerIndex, activityIndex) }
+                            editMode = editMode,
+                            onClick = { onActivityClick(selectedTowerIndex, activityIndex) },
+                            onLongClick = {
+                                if (editMode) {
+                                    showRenameDialog = Triple(activityIndex, activity.name, activity)
+                                }
+                            }
                         )
                     }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SyncStatusIndicator(isSyncing: Boolean, syncDone: Boolean) {
-    val infiniteTransition = rememberInfiniteTransition(label = "sync_rotation")
-    val rotation by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "rotation"
-    )
-
-    Box(
-        modifier = Modifier.size(40.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        AnimatedContent(
-            targetState = when {
-                isSyncing -> "syncing"
-                syncDone -> "done"
-                else -> "idle"
-            },
-            transitionSpec = {
-                fadeIn(tween(200)) togetherWith fadeOut(tween(200))
-            },
-            label = "sync_status"
-        ) { state ->
-            when (state) {
-                "syncing" -> {
-                    Icon(
-                        Icons.Default.Sync,
-                        contentDescription = "Syncing",
-                        modifier = Modifier
-                            .size(20.dp)
-                            .rotate(rotation),
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                }
-                "done" -> {
-                    Icon(
-                        Icons.Default.CheckCircle,
-                        contentDescription = "Synced",
-                        modifier = Modifier.size(20.dp),
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                }
-                else -> {
-                    // Idle: show nothing or a subtle indicator
                 }
             }
         }
@@ -416,10 +539,13 @@ private fun buildFilterLabel(filters: Set<MainViewModel.StatusFilter>): String {
     return parts.joinToString(" · ") + " ACTIVITIES"
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ActivityProgressCard(
     activity: Activity,
-    onClick: () -> Unit
+    editMode: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
 ) {
     val animatedComplete by animateFloatAsState(
         targetValue = activity.completionPercent / 100f,
@@ -439,7 +565,6 @@ private fun ActivityProgressCard(
     val emptyColor = if (isDark) StatusEmptyDark else StatusEmpty
 
     Card(
-        onClick = onClick,
         modifier = Modifier
             .fillMaxWidth()
             .animateContentSize(),
@@ -449,7 +574,12 @@ private fun ActivityProgressCard(
         )
     ) {
         Column(
-            modifier = Modifier.padding(14.dp)
+            modifier = Modifier
+                .combinedClickable(
+                    onClick = onClick,
+                    onLongClick = onLongClick
+                )
+                .padding(14.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -486,13 +616,27 @@ private fun ActivityProgressCard(
                         }
                     }
                 }
-                Text(
-                    "${activity.completionPercent.toInt()}%",
-                    style = MaterialTheme.typography.labelLarge.copy(
-                        fontWeight = FontWeight.SemiBold,
-                        color = completeColor
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (activity.usePercentage) {
+                        Text(
+                            "%",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                fontSize = 9.sp
+                            )
+                        )
+                    }
+                    Text(
+                        "${activity.completionPercent.toInt()}%",
+                        style = MaterialTheme.typography.labelLarge.copy(
+                            fontWeight = FontWeight.SemiBold,
+                            color = completeColor
+                        )
                     )
-                )
+                }
             }
 
             Spacer(modifier = Modifier.height(10.dp))

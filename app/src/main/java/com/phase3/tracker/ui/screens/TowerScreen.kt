@@ -1,22 +1,23 @@
 package com.phase3.tracker.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -24,7 +25,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -37,20 +37,34 @@ import com.phase3.tracker.ui.theme.*
 fun TowerScreen(
     towerName: String,
     activities: List<Activity>,
+    editMode: Boolean,
+    allGroupNames: List<String>,
     onActivityClick: (Int) -> Unit,
-    onAddActivity: (name: String, contractor: String, categories: List<String>) -> Unit,
-    onRenameActivity: (index: Int, newName: String, contractor: String, categories: List<String>) -> Unit,
+    onAddActivity: (name: String, contractor: String, categories: List<String>, groupName: String, usePercentage: Boolean) -> Unit,
+    onRenameActivity: (index: Int, newName: String, contractor: String, categories: List<String>, groupName: String, usePercentage: Boolean) -> Unit,
     onBack: () -> Unit
 ) {
     var showAddDialog by remember { mutableStateOf(false) }
     var addActivityName by remember { mutableStateOf("") }
     var addContractor by remember { mutableStateOf("") }
     var addCategories by remember { mutableStateOf<List<String>>(emptyList()) }
+    var addGroupName by remember { mutableStateOf("") }
+    var addUsePercentage by remember { mutableStateOf(false) }
 
     var showRenameDialog by remember { mutableStateOf<Triple<Int, String, Activity?>?>(null) }
     var renameText by remember { mutableStateOf("") }
     var renameContractor by remember { mutableStateOf("") }
     var renameCategories by remember { mutableStateOf<List<String>>(emptyList()) }
+    var renameGroupName by remember { mutableStateOf("") }
+    var renameUsePercentage by remember { mutableStateOf(false) }
+
+    // Collapsible group state — all expanded by default
+    val expandedGroups = remember { mutableStateMapOf<String, Boolean>() }
+
+    // Group activities by groupName
+    val groupedActivities = remember(activities) {
+        activities.withIndex().groupBy { it.value.groupName }
+    }
 
     // Add Activity dialog
     if (showAddDialog) {
@@ -62,13 +76,20 @@ fun TowerScreen(
             onContractorChange = { addContractor = it },
             categories = addCategories,
             onCategoriesChange = { addCategories = it },
+            groupName = addGroupName,
+            onGroupNameChange = { addGroupName = it },
+            allGroupNames = allGroupNames,
+            usePercentage = addUsePercentage,
+            onUsePercentageChange = { addUsePercentage = it },
             confirmLabel = "Add",
             onConfirm = {
                 if (addActivityName.isNotBlank()) {
-                    onAddActivity(addActivityName.trim(), addContractor.trim(), addCategories)
+                    onAddActivity(addActivityName.trim(), addContractor.trim(), addCategories, addGroupName.trim(), addUsePercentage)
                     addActivityName = ""
                     addContractor = ""
                     addCategories = emptyList()
+                    addGroupName = ""
+                    addUsePercentage = false
                     showAddDialog = false
                 }
             },
@@ -77,6 +98,8 @@ fun TowerScreen(
                 addActivityName = ""
                 addContractor = ""
                 addCategories = emptyList()
+                addGroupName = ""
+                addUsePercentage = false
             }
         )
     }
@@ -87,6 +110,8 @@ fun TowerScreen(
             renameText = currentName
             renameContractor = activity?.contractor ?: ""
             renameCategories = activity?.categories ?: emptyList()
+            renameGroupName = activity?.groupName ?: ""
+            renameUsePercentage = activity?.usePercentage ?: false
         }
         ActivityFormDialog(
             title = "Edit Activity",
@@ -96,10 +121,15 @@ fun TowerScreen(
             onContractorChange = { renameContractor = it },
             categories = renameCategories,
             onCategoriesChange = { renameCategories = it },
+            groupName = renameGroupName,
+            onGroupNameChange = { renameGroupName = it },
+            allGroupNames = allGroupNames,
+            usePercentage = renameUsePercentage,
+            onUsePercentageChange = { renameUsePercentage = it },
             confirmLabel = "Save",
             onConfirm = {
                 if (renameText.isNotBlank()) {
-                    onRenameActivity(index, renameText.trim(), renameContractor.trim(), renameCategories)
+                    onRenameActivity(index, renameText.trim(), renameContractor.trim(), renameCategories, renameGroupName.trim(), renameUsePercentage)
                     showRenameDialog = null
                 }
             },
@@ -127,12 +157,14 @@ fun TowerScreen(
             )
         },
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = { showAddDialog = true },
-                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-            ) {
-                Icon(Icons.Default.Add, contentDescription = "Add Activity")
+            if (editMode) {
+                FloatingActionButton(
+                    onClick = { showAddDialog = true },
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "Add Activity")
+                }
             }
         },
         containerColor = MaterialTheme.colorScheme.surface
@@ -142,181 +174,78 @@ fun TowerScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
             contentPadding = PaddingValues(bottom = 88.dp)
         ) {
-            itemsIndexed(activities) { index, activity ->
+            groupedActivities.forEach { (groupName, indexedActivities) ->
+                val groupIndex = indexedActivities.firstOrNull()?.value?.groupIndex ?: 0
+                val isExpanded = expandedGroups.getOrPut(groupName) { true }
+                val groupColor = GroupColors.getOrElse(groupIndex) { GroupApartments }
+
                 // Group header
-                val prevGroup = activities.getOrNull(index - 1)?.groupName
-                if (activity.groupName != prevGroup) {
-                    if (index > 0) {
-                        Spacer(modifier = Modifier.height(12.dp))
-                    }
-
-                    Text(
-                        activity.groupName.uppercase(),
-                        style = MaterialTheme.typography.labelMedium.copy(
-                            letterSpacing = 1.5.sp,
-                            color = GroupColors.getOrElse(activity.groupIndex) { GroupApartments },
-                            fontWeight = FontWeight.Bold
-                        ),
-                        modifier = Modifier.padding(vertical = 8.dp)
-                    )
-                }
-
-                ActivityItem(
-                    activity = activity,
-                    groupColor = GroupColors.getOrElse(activity.groupIndex) { GroupApartments },
-                    onClick = { onActivityClick(index) },
-                    onLongClick = { showRenameDialog = Triple(index, activity.name, activity) }
-                )
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun ActivityFormDialog(
-    title: String,
-    nameValue: String,
-    onNameChange: (String) -> Unit,
-    contractorValue: String,
-    onContractorChange: (String) -> Unit,
-    categories: List<String>,
-    onCategoriesChange: (List<String>) -> Unit,
-    confirmLabel: String,
-    onConfirm: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    var categoryInput by remember { mutableStateOf("") }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = {
-            Column(
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                // Activity Name
-                OutlinedTextField(
-                    value = nameValue,
-                    onValueChange = onNameChange,
-                    label = { Text("Activity name") },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        cursorColor = MaterialTheme.colorScheme.primary
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                // Contractor
-                OutlinedTextField(
-                    value = contractorValue,
-                    onValueChange = onContractorChange,
-                    label = { Text("Contractor") },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        cursorColor = MaterialTheme.colorScheme.primary
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                // Category tags
-                Text(
-                    "Categories",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                // Current tags
-                if (categories.isNotEmpty()) {
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                item(key = "header_$groupName") {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable {
+                                expandedGroups[groupName] = !isExpanded
+                            }
+                            .padding(vertical = 8.dp, horizontal = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        categories.forEach { cat ->
-                            InputChip(
-                                selected = true,
-                                onClick = {
-                                    onCategoriesChange(categories - cat)
-                                },
-                                label = { Text(cat, style = MaterialTheme.typography.labelSmall) },
-                                trailingIcon = {
-                                    Icon(
-                                        Icons.Default.Close,
-                                        contentDescription = "Remove $cat",
-                                        modifier = Modifier.size(14.dp)
-                                    )
-                                },
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.height(28.dp)
+                        Text(
+                            groupName.uppercase(),
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                letterSpacing = 1.5.sp,
+                                color = groupColor,
+                                fontWeight = FontWeight.Bold
+                            ),
+                            modifier = Modifier.weight(1f)
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                "${indexedActivities.size}",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            )
+                            Icon(
+                                if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                contentDescription = if (isExpanded) "Collapse" else "Expand",
+                                modifier = Modifier.size(20.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
                 }
 
-                // Preset category chips
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Activity.VALID_CATEGORIES.forEach { cat ->
-                        val isSelected = cat in categories
-                        FilterChip(
-                            selected = isSelected,
-                            onClick = {
-                                if (isSelected) {
-                                    onCategoriesChange(categories - cat)
-                                } else {
-                                    onCategoriesChange(categories + cat)
+                // Activities (collapsible)
+                if (isExpanded) {
+                    indexedActivities.forEach { (originalIndex, activity) ->
+                        item(key = "activity_${originalIndex}") {
+                            ActivityItem(
+                                activity = activity,
+                                groupColor = groupColor,
+                                onClick = { onActivityClick(originalIndex) },
+                                onLongClick = {
+                                    if (editMode) {
+                                        showRenameDialog = Triple(originalIndex, activity.name, activity)
+                                    }
                                 }
-                            },
-                            label = { Text(cat, style = MaterialTheme.typography.labelSmall) },
-                            modifier = Modifier.height(28.dp),
-                            shape = RoundedCornerShape(8.dp)
-                        )
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                        }
                     }
                 }
-
-                // Custom category input
-                OutlinedTextField(
-                    value = categoryInput,
-                    onValueChange = { categoryInput = it },
-                    label = { Text("Custom category") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(
-                        onDone = {
-                            val trimmed = categoryInput.trim()
-                            if (trimmed.isNotBlank() && trimmed !in categories) {
-                                onCategoriesChange(categories + trimmed)
-                                categoryInput = ""
-                            }
-                        }
-                    ),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        cursorColor = MaterialTheme.colorScheme.primary
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                )
             }
-        },
-        confirmButton = {
-            TextButton(onClick = onConfirm) {
-                Text(confirmLabel)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        },
-        shape = RoundedCornerShape(28.dp)
-    )
+        }
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -384,17 +313,29 @@ private fun ActivityItem(
                 }
             }
 
-            // Status dots
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                if (completeCount > 0) {
-                    StatusDot(completeColor, "$completeCount")
-                }
-                if (wipCount > 0) {
-                    StatusDot(wipColor, "$wipCount")
-                }
-                val emptyCount = total - completeCount - wipCount
-                if (emptyCount > 0) {
-                    StatusDot(emptyColor.copy(alpha = 0.7f), "$emptyCount")
+            // Status info
+            if (activity.usePercentage) {
+                // Show average percentage for percentage-based activities
+                Text(
+                    "${activity.completionPercent.toInt()}%",
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontWeight = FontWeight.SemiBold,
+                        color = completeColor
+                    )
+                )
+            } else {
+                // Status dots
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (completeCount > 0) {
+                        StatusDot(completeColor, "$completeCount")
+                    }
+                    if (wipCount > 0) {
+                        StatusDot(wipColor, "$wipCount")
+                    }
+                    val emptyCount = total - completeCount - wipCount
+                    if (emptyCount > 0) {
+                        StatusDot(emptyColor.copy(alpha = 0.7f), "$emptyCount")
+                    }
                 }
             }
         }

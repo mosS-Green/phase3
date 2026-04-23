@@ -1,0 +1,228 @@
+package com.phase3.tracker.ui.screens
+
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.ArrowDropUp
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.unit.dp
+import com.phase3.tracker.model.Activity
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun ActivityFormDialog(
+    title: String,
+    nameValue: String,
+    onNameChange: (String) -> Unit,
+    contractorValue: String,
+    onContractorChange: (String) -> Unit,
+    categories: List<String>,
+    onCategoriesChange: (List<String>) -> Unit,
+    groupName: String,
+    onGroupNameChange: (String) -> Unit,
+    allGroupNames: List<String>,
+    usePercentage: Boolean,
+    onUsePercentageChange: (Boolean) -> Unit,
+    confirmLabel: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    var categoryInput by remember { mutableStateOf("") }
+    var showGroupDropdown by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Group / Classification dropdown
+                Box {
+                    OutlinedTextField(
+                        value = groupName,
+                        onValueChange = onGroupNameChange,
+                        label = { Text("Classification") },
+                        singleLine = true,
+                        readOnly = false,
+                        trailingIcon = {
+                            IconButton(onClick = { showGroupDropdown = !showGroupDropdown }) {
+                                Icon(
+                                    if (showGroupDropdown) Icons.Default.ArrowDropUp
+                                    else Icons.Default.ArrowDropDown,
+                                    contentDescription = "Toggle dropdown",
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            cursorColor = MaterialTheme.colorScheme.primary
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    DropdownMenu(
+                        expanded = showGroupDropdown,
+                        onDismissRequest = { showGroupDropdown = false }
+                    ) {
+                        allGroupNames.forEach { name ->
+                            DropdownMenuItem(
+                                text = { Text(name) },
+                                onClick = {
+                                    onGroupNameChange(name)
+                                    showGroupDropdown = false
+                                }
+                            )
+                        }
+                    }
+                }
+
+                // Activity Name
+                OutlinedTextField(
+                    value = nameValue,
+                    onValueChange = onNameChange,
+                    label = { Text("Activity name") },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        cursorColor = MaterialTheme.colorScheme.primary
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                // Contractor
+                OutlinedTextField(
+                    value = contractorValue,
+                    onValueChange = onContractorChange,
+                    label = { Text("Contractor") },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        cursorColor = MaterialTheme.colorScheme.primary
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                // Percentage toggle
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        "Track by percentage",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Switch(
+                        checked = usePercentage,
+                        onCheckedChange = onUsePercentageChange,
+                        colors = SwitchDefaults.colors(
+                            checkedTrackColor = MaterialTheme.colorScheme.primary,
+                            checkedThumbColor = MaterialTheme.colorScheme.onPrimary
+                        )
+                    )
+                }
+
+                // Category tags
+                Text(
+                    "Categories",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                // Current tags
+                if (categories.isNotEmpty()) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        categories.forEach { cat ->
+                            InputChip(
+                                selected = true,
+                                onClick = {
+                                    onCategoriesChange(categories - cat)
+                                },
+                                label = { Text(cat, style = MaterialTheme.typography.labelSmall) },
+                                trailingIcon = {
+                                    Icon(
+                                        Icons.Default.Close,
+                                        contentDescription = "Remove $cat",
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                },
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.height(28.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Preset category chips
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Activity.VALID_CATEGORIES.forEach { cat ->
+                        val isSelected = cat in categories
+                        FilterChip(
+                            selected = isSelected,
+                            onClick = {
+                                if (isSelected) {
+                                    onCategoriesChange(categories - cat)
+                                } else {
+                                    onCategoriesChange(categories + cat)
+                                }
+                            },
+                            label = { Text(cat, style = MaterialTheme.typography.labelSmall) },
+                            modifier = Modifier.height(28.dp),
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                    }
+                }
+
+                // Custom category input
+                OutlinedTextField(
+                    value = categoryInput,
+                    onValueChange = { categoryInput = it },
+                    label = { Text("Custom category") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(
+                        onDone = {
+                            val trimmed = categoryInput.trim()
+                            if (trimmed.isNotBlank() && trimmed !in categories) {
+                                onCategoriesChange(categories + trimmed)
+                                categoryInput = ""
+                            }
+                        }
+                    ),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        cursorColor = MaterialTheme.colorScheme.primary
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text(confirmLabel)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        },
+        shape = RoundedCornerShape(28.dp)
+    )
+}

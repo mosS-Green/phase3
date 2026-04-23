@@ -15,6 +15,7 @@ class ExcelManager {
 
     companion object {
         private const val FIRST_DATA_ROW = 3  // Row 3 is first activity
+        private const val GROUP_COL = 0       // Column A — group/classification
         private const val CONTRACTOR_COL = 2  // Column C (0-indexed)
         private const val CATEGORY_COL = 3    // Column D (0-indexed)
         private const val FLAT_START_COL = 4  // Column E (0-indexed) — shifted by 2 for new Contractor+Category cols
@@ -26,6 +27,9 @@ class ExcelManager {
         val FLAT_NUMBERS: List<Int> = (FIRST_FLOOR..LAST_FLOOR).flatMap { floor ->
             (1..FLATS_PER_FLOOR).map { flat -> floor * 100 + flat }
         }
+
+        /** Only first flat per floor (for floor-based activities) */
+        val FLOOR_NUMBERS: List<Int> = (FIRST_FLOOR..LAST_FLOOR).map { floor -> floor * 100 + 1 }
 
         fun flatToColIndex(flatNumber: Int): Int {
             val floor = flatNumber / 100
@@ -56,6 +60,16 @@ class ExcelManager {
         }
     }
 
+    private fun getCellNumeric(row: org.apache.poi.ss.usermodel.Row?, colIdx: Int): Double? {
+        val cell = row?.getCell(colIdx) ?: return null
+        return when (cell.cellType) {
+            CellType.NUMERIC -> cell.numericCellValue
+            CellType.STRING -> cell.stringCellValue?.trim()?.toDoubleOrNull()
+            CellType.BLANK -> null
+            else -> null
+        }
+    }
+
     private fun parseTowers(): List<Tower> {
         val wb = workbook ?: return emptyList()
         val towers = mutableListOf<Tower>()
@@ -77,32 +91,68 @@ class ExcelManager {
                 val excelRow = rowIdx + 1 // Convert to 1-based
                 val group = Tower.groupForRow(excelRow)
 
+                // Read group/classification from column A, fall back to row-range detection
+                val groupFromExcel = getCellString(row, GROUP_COL)
+                val groupName = if (!groupFromExcel.isNullOrBlank()) {
+                    groupFromExcel
+                } else {
+                    group?.name ?: "Other"
+                }
+                val groupIndex = Activity.groupIndexFor(groupName)
+                val isFloorBased = group?.isFloorBased ?: groupName.contains("Common", ignoreCase = true)
+
                 // Read contractor (column C) and category (column D)
                 val contractor = getCellString(row, CONTRACTOR_COL) ?: ""
                 val categoryRaw = getCellString(row, CATEGORY_COL) ?: ""
                 val categories = Activity.parseCategories(categoryRaw)
 
+                // Determine if this activity uses percentage tracking
+                // Convention: if any flat cell has a numeric value (not "C"/"W"/""), it's percentage-based
+                var hasPercentage = false
                 val statuses = mutableMapOf<Int, FlatStatus>()
+                val percentages = mutableMapOf<Int, Int>()
+
                 for (flatNum in FLAT_NUMBERS) {
                     val colIdx = flatToColIndex(flatNum)
                     val cell = row.getCell(colIdx)
-                    val value = when {
+                    val value: Any? = when {
                         cell == null -> null
                         cell.cellType == CellType.STRING -> cell.stringCellValue
+                        cell.cellType == CellType.NUMERIC -> cell.numericCellValue
                         else -> null
                     }
+
+                    // Check if numeric (percentage)
+                    val pct = FlatStatus.parsePercentage(value)
+                    if (pct != null && cell?.cellType == CellType.NUMERIC) {
+                        hasPercentage = true
+                        percentages[flatNum] = pct
+                    }
+
                     statuses[flatNum] = FlatStatus.fromExcel(value)
+                }
+
+                // If percentage mode detected, ensure all flats have a percentage entry
+                if (hasPercentage) {
+                    for (flatNum in FLAT_NUMBERS) {
+                        if (flatNum !in percentages) {
+                            percentages[flatNum] = 0
+                        }
+                    }
                 }
 
                 activities.add(
                     Activity(
                         name = activityName,
                         rowIndex = excelRow,
-                        groupName = group?.name ?: "Other",
-                        groupIndex = group?.index ?: 0,
+                        groupName = groupName,
+                        groupIndex = groupIndex,
                         contractor = contractor,
                         categories = categories,
-                        statuses = statuses
+                        usePercentage = hasPercentage,
+                        isFloorBased = isFloorBased,
+                        statuses = statuses,
+                        percentages = percentages
                     )
                 )
             }
@@ -128,13 +178,26 @@ class ExcelManager {
         }
     }
 
-    fun addActivity(sheetName: String, activityName: String, contractor: String, categoryStr: String): Int {
+    fun updatePercentage(sheetName: String, activityRow: Int, flatNumber: Int, percentage: Int) {
+        val wb = workbook ?: return
+        val sheet = wb.getSheet(sheetName) ?: return
+        val row = sheet.getRow(activityRow - 1) ?: sheet.createRow(activityRow - 1)
+        val colIdx = flatToColIndex(flatNumber)
+        val cell = row.getCell(colIdx) ?: row.createCell(colIdx)
+        cell.setCellValue(percentage.toDouble())
+    }
+
+    fun addActivity(sheetName: String, activityName: String, contractor: String, categoryStr: String, groupName: String = ""): Int {
         val wb = workbook ?: return -1
         val sheet = wb.getSheet(sheetName) ?: return -1
 
         val newRowIdx = sheet.lastRowNum + 1
         val row = sheet.createRow(newRowIdx)
 
+        // Column A - group/classification
+        if (groupName.isNotBlank()) {
+            row.createCell(GROUP_COL).setCellValue(groupName)
+        }
         // Column B - activity name
         row.createCell(1).setCellValue(activityName)
         // Column C - contractor
@@ -145,11 +208,13 @@ class ExcelManager {
         return newRowIdx + 1 // Return 1-based row number
     }
 
-    fun renameActivity(sheetName: String, activityRow: Int, newName: String, contractor: String, categoryStr: String) {
+    fun renameActivity(sheetName: String, activityRow: Int, newName: String, contractor: String, categoryStr: String, groupName: String = "") {
         val wb = workbook ?: return
         val sheet = wb.getSheet(sheetName) ?: return
         val row = sheet.getRow(activityRow - 1) ?: return
 
+        // Column A - group/classification
+        (row.getCell(GROUP_COL) ?: row.createCell(GROUP_COL)).setCellValue(groupName)
         // Column B - name
         (row.getCell(1) ?: row.createCell(1)).setCellValue(newName)
         // Column C - contractor

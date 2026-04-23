@@ -7,34 +7,112 @@ data class Activity(
     val groupIndex: Int,         // 0-3 for color coding
     val contractor: String = "",
     val categories: List<String> = emptyList(),
-    val statuses: MutableMap<Int, FlatStatus>  // flatNumber -> status
+    val usePercentage: Boolean = false,   // Track by percentage instead of C/W/E
+    val isFloorBased: Boolean = false,    // Common area: 1 cell per floor
+    val statuses: MutableMap<Int, FlatStatus>,  // flatNumber -> status
+    val percentages: MutableMap<Int, Int> = mutableMapOf()  // flatNumber -> 0-100
 ) {
     val completionPercent: Float
         get() {
-            if (statuses.isEmpty()) return 0f
-            val complete = statuses.values.count { it == FlatStatus.COMPLETE }
-            return complete.toFloat() / statuses.size * 100f
+            if (usePercentage) {
+                val relevantKeys = if (isFloorBased) {
+                    percentages.keys.filter { it % 100 == 1 }
+                } else {
+                    percentages.keys.toList()
+                }
+                if (relevantKeys.isEmpty()) return 0f
+                return relevantKeys.mapNotNull { percentages[it] }.average().toFloat()
+            }
+            val relevantStatuses = if (isFloorBased) {
+                statuses.filter { it.key % 100 == 1 }.values
+            } else {
+                statuses.values
+            }
+            if (relevantStatuses.isEmpty()) return 0f
+            val complete = relevantStatuses.count { it == FlatStatus.COMPLETE }
+            return complete.toFloat() / relevantStatuses.size * 100f
         }
 
     val wipPercent: Float
         get() {
-            if (statuses.isEmpty()) return 0f
-            val wip = statuses.values.count { it == FlatStatus.WIP }
-            return wip.toFloat() / statuses.size * 100f
+            if (usePercentage) {
+                // For percentage mode, WIP = cells between 1-99%
+                val relevantKeys = if (isFloorBased) {
+                    percentages.keys.filter { it % 100 == 1 }
+                } else {
+                    percentages.keys.toList()
+                }
+                if (relevantKeys.isEmpty()) return 0f
+                val wip = relevantKeys.count { (percentages[it] ?: 0) in 1..99 }
+                return wip.toFloat() / relevantKeys.size * 100f
+            }
+            val relevantStatuses = if (isFloorBased) {
+                statuses.filter { it.key % 100 == 1 }.values
+            } else {
+                statuses.values
+            }
+            if (relevantStatuses.isEmpty()) return 0f
+            val wip = relevantStatuses.count { it == FlatStatus.WIP }
+            return wip.toFloat() / relevantStatuses.size * 100f
         }
 
     val emptyPercent: Float
         get() {
-            if (statuses.isEmpty()) return 0f
-            val empty = statuses.values.count { it == FlatStatus.EMPTY }
-            return empty.toFloat() / statuses.size * 100f
+            if (usePercentage) {
+                val relevantKeys = if (isFloorBased) {
+                    percentages.keys.filter { it % 100 == 1 }
+                } else {
+                    percentages.keys.toList()
+                }
+                if (relevantKeys.isEmpty()) return 0f
+                val empty = relevantKeys.count { (percentages[it] ?: 0) == 0 }
+                return empty.toFloat() / relevantKeys.size * 100f
+            }
+            val relevantStatuses = if (isFloorBased) {
+                statuses.filter { it.key % 100 == 1 }.values
+            } else {
+                statuses.values
+            }
+            if (relevantStatuses.isEmpty()) return 0f
+            val empty = relevantStatuses.count { it == FlatStatus.EMPTY }
+            return empty.toFloat() / relevantStatuses.size * 100f
         }
 
     val isFullyComplete: Boolean
-        get() = statuses.values.all { it == FlatStatus.COMPLETE }
+        get() {
+            if (usePercentage) {
+                val relevantKeys = if (isFloorBased) {
+                    percentages.keys.filter { it % 100 == 1 }
+                } else {
+                    percentages.keys.toList()
+                }
+                return relevantKeys.isNotEmpty() && relevantKeys.all { (percentages[it] ?: 0) == 100 }
+            }
+            val relevantStatuses = if (isFloorBased) {
+                statuses.filter { it.key % 100 == 1 }.values
+            } else {
+                statuses.values
+            }
+            return relevantStatuses.all { it == FlatStatus.COMPLETE }
+        }
 
     val isFullyEmpty: Boolean
-        get() = statuses.values.all { it == FlatStatus.EMPTY }
+        get() {
+            if (usePercentage) {
+                val relevantKeys = if (isFloorBased) {
+                    percentages.keys.filter { it % 100 == 1 }
+                } else {
+                    percentages.keys.toList()
+                }
+                return relevantKeys.isEmpty() || relevantKeys.all { (percentages[it] ?: 0) == 0 }
+            }
+            val relevantStatuses = if (isFloorBased) {
+                statuses.filter { it.key % 100 == 1 }.values
+            } else {
+                statuses.values
+            }
+            return relevantStatuses.all { it == FlatStatus.EMPTY }
+        }
 
     val isOngoing: Boolean
         get() = !isFullyComplete && !isFullyEmpty
@@ -56,5 +134,28 @@ data class Activity(
         val VALID_CATEGORIES = listOf(
             "Int. Flat", "Lobby", "Shaft", "Staircase", "Civil", "MEP", "Ext. Works"
         )
+
+        /** Default group names for row-range fallback */
+        val DEFAULT_GROUP_NAMES = listOf(
+            "Apartments (Pre Final Stage)",
+            "Handing Over Stage",
+            "Common Area",
+            "External Façade & Painting"
+        )
+
+        /** Map group name to an index for color coding */
+        fun groupIndexFor(name: String): Int {
+            return when {
+                name.contains("Apartment", ignoreCase = true) ||
+                name.contains("Pre Final", ignoreCase = true) -> 0
+                name.contains("Handing", ignoreCase = true) -> 1
+                name.contains("Common", ignoreCase = true) -> 2
+                name.contains("Façade", ignoreCase = true) ||
+                name.contains("Facade", ignoreCase = true) ||
+                name.contains("External", ignoreCase = true) ||
+                name.contains("Painting", ignoreCase = true) -> 3
+                else -> 0
+            }
+        }
     }
 }

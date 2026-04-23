@@ -23,5 +23,19 @@ enum class FlatStatus {
             "W" -> WIP
             else -> EMPTY
         }
+
+        /** Try to parse a numeric percentage from the cell value. Returns null if not numeric. */
+        fun parsePercentage(value: Any?): Int? {
+            if (value == null) return null
+            val str = value.toString().trim()
+            if (str.isEmpty()) return null
+            // Handle numeric cell values (doubles from POI)
+            return try {
+                val num = str.toDouble()
+                num.toInt().coerceIn(0, 100)
+            } catch (_: NumberFormatException) {
+                null
+            }
+        }
     }
 }

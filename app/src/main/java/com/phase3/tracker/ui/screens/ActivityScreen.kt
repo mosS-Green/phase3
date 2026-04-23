@@ -17,9 +17,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CameraAlt
@@ -29,10 +29,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -51,8 +53,10 @@ import java.io.FileOutputStream
 fun ActivityScreen(
     activityName: String,
     activity: Activity,
+    editMode: Boolean,
     onToggleFlat: (Int) -> Unit,
     onToggleFloor: (Int) -> Unit,
+    onUpdatePercentage: (flatNumber: Int, percentage: Int) -> Unit,
     onBack: () -> Unit
 ) {
     val isDark = isSystemInDarkTheme()
@@ -62,6 +66,80 @@ fun ActivityScreen(
     val context = LocalContext.current
     val view = LocalView.current
     val scope = rememberCoroutineScope()
+
+    // Percentage input dialog state
+    var showPercentageDialog by remember { mutableStateOf<Int?>(null) }
+    var percentageInput by remember { mutableStateOf("") }
+
+    // Percentage input dialog
+    showPercentageDialog?.let { flatNumber ->
+        val currentPct = activity.percentages[flatNumber] ?: 0
+        LaunchedEffect(flatNumber) {
+            percentageInput = if (currentPct > 0) currentPct.toString() else ""
+        }
+        AlertDialog(
+            onDismissRequest = { showPercentageDialog = null },
+            title = {
+                Text(
+                    if (activity.isFloorBased) "Floor ${flatNumber / 100}" else "Flat $flatNumber",
+                    style = MaterialTheme.typography.titleMedium
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Enter completion percentage (0-100)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = percentageInput,
+                        onValueChange = { v ->
+                            // Only allow digits 0-100
+                            val filtered = v.filter { it.isDigit() }
+                            val num = filtered.toIntOrNull()
+                            if (num == null || num <= 100) {
+                                percentageInput = filtered
+                            }
+                        },
+                        label = { Text("%") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Number,
+                            imeAction = ImeAction.Done
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onDone = {
+                                val pct = percentageInput.toIntOrNull() ?: 0
+                                onUpdatePercentage(flatNumber, pct.coerceIn(0, 100))
+                                showPercentageDialog = null
+                            }
+                        ),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            cursorColor = MaterialTheme.colorScheme.primary
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val pct = percentageInput.toIntOrNull() ?: 0
+                    onUpdatePercentage(flatNumber, pct.coerceIn(0, 100))
+                    showPercentageDialog = null
+                }) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPercentageDialog = null }) {
+                    Text("Cancel")
+                }
+            },
+            shape = RoundedCornerShape(28.dp)
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -113,9 +191,15 @@ fun ActivityScreen(
                     .padding(horizontal = 16.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally)
             ) {
-                LegendItem(completeColor, "Complete")
-                LegendItem(wipColor, "WIP")
-                LegendItem(emptyColor.copy(alpha = 0.75f), "Empty")
+                if (activity.usePercentage) {
+                    LegendItem(completeColor, "100%")
+                    LegendItem(wipColor, "1-99%")
+                    LegendItem(emptyColor.copy(alpha = 0.75f), "0%")
+                } else {
+                    LegendItem(completeColor, "Complete")
+                    LegendItem(wipColor, "WIP")
+                    LegendItem(emptyColor.copy(alpha = 0.75f), "Empty")
+                }
             }
 
             Spacer(modifier = Modifier.height(4.dp))
@@ -127,113 +211,373 @@ fun ActivityScreen(
                     .padding(horizontal = 16.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                val complete = activity.statuses.values.count { it == FlatStatus.COMPLETE }
-                val wip = activity.statuses.values.count { it == FlatStatus.WIP }
-                val empty = activity.statuses.size - complete - wip
-
-                StatChip("${activity.completionPercent.toInt()}%", "Done", completeColor)
-                StatChip("$wip", "WIP", wipColor)
-                StatChip("$empty", "Pending", emptyColor)
+                if (activity.usePercentage) {
+                    val relevantKeys = if (activity.isFloorBased) {
+                        activity.percentages.keys.filter { it % 100 == 1 }
+                    } else {
+                        activity.percentages.keys.toList()
+                    }
+                    val done = relevantKeys.count { (activity.percentages[it] ?: 0) == 100 }
+                    val wip = relevantKeys.count { (activity.percentages[it] ?: 0) in 1..99 }
+                    val empty = relevantKeys.count { (activity.percentages[it] ?: 0) == 0 }
+                    StatChip("${activity.completionPercent.toInt()}%", "Avg", completeColor)
+                    StatChip("$done", "Done", completeColor)
+                    StatChip("$wip", "WIP", wipColor)
+                    StatChip("$empty", "Pending", emptyColor)
+                } else {
+                    val relevantStatuses = if (activity.isFloorBased) {
+                        activity.statuses.filter { it.key % 100 == 1 }
+                    } else {
+                        activity.statuses
+                    }
+                    val complete = relevantStatuses.values.count { it == FlatStatus.COMPLETE }
+                    val wip = relevantStatuses.values.count { it == FlatStatus.WIP }
+                    val empty = relevantStatuses.size - complete - wip
+                    StatChip("${activity.completionPercent.toInt()}%", "Done", completeColor)
+                    StatChip("$wip", "WIP", wipColor)
+                    StatChip("$empty", "Pending", emptyColor)
+                }
             }
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // ── Grid: 4 columns + floor label ───────────────────
-            LazyColumn(
+            // ── Grid ────────────────────────────────────────────
+            if (activity.isFloorBased) {
+                // Floor-based grid: 1 cell per floor
+                FloorBasedGrid(
+                    activity = activity,
+                    editMode = editMode,
+                    completeColor = completeColor,
+                    wipColor = wipColor,
+                    emptyColor = emptyColor,
+                    onToggleFloor = onToggleFloor,
+                    onShowPercentageDialog = { showPercentageDialog = it }
+                )
+            } else {
+                // Flat-based grid: 4 columns + floor label
+                FlatBasedGrid(
+                    activity = activity,
+                    editMode = editMode,
+                    completeColor = completeColor,
+                    wipColor = wipColor,
+                    emptyColor = emptyColor,
+                    onToggleFlat = onToggleFlat,
+                    onToggleFloor = onToggleFloor,
+                    onShowPercentageDialog = { showPercentageDialog = it }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FloorBasedGrid(
+    activity: Activity,
+    editMode: Boolean,
+    completeColor: Color,
+    wipColor: Color,
+    emptyColor: Color,
+    onToggleFloor: (Int) -> Unit,
+    onShowPercentageDialog: (Int) -> Unit
+) {
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 8.dp),
+        contentPadding = PaddingValues(bottom = 16.dp)
+    ) {
+        // Header
+        item {
+            Row(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 8.dp),
-                contentPadding = PaddingValues(bottom = 16.dp)
+                    .fillMaxWidth()
+                    .padding(bottom = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(3.dp)
             ) {
-                // Column headers
-                item {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(bottom = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(3.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier.width(40.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                "FL",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 10.sp
-                                )
-                            )
-                        }
-                        for (unit in 1..4) {
-                            Box(
-                                modifier = Modifier.weight(1f),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    "0$unit",
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        fontSize = 10.sp
-                                    )
-                                )
-                            }
-                        }
-                    }
+                Box(
+                    modifier = Modifier.width(40.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "FL",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 10.sp
+                        )
+                    )
                 }
+                Box(
+                    modifier = Modifier.weight(1f),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "STATUS",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 10.sp
+                        )
+                    )
+                }
+            }
+        }
 
-                // Floors 34 down to 2
-                items(33) { reverseIndex ->
-                    val floor = 34 - reverseIndex
+        // Floors 34 down to 2
+        items(33) { reverseIndex ->
+            val floor = 34 - reverseIndex
+            val flatNumber = floor * 100 + 1
 
-                    Row(
+            if (activity.usePercentage) {
+                val pct = activity.percentages[flatNumber] ?: 0
+                val bgColor = percentageColor(pct, completeColor, wipColor, emptyColor)
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 1.5.dp),
+                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 1.5.dp),
-                        horizontalArrangement = Arrangement.spacedBy(3.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                            .width(40.dp)
+                            .height(44.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                        contentAlignment = Alignment.Center
                     ) {
-                        // Floor label
-                        Box(
-                            modifier = Modifier
-                                .width(40.dp)
-                                .height(44.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(
-                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                                )
-                                .clickable { onToggleFloor(floor) },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                "$floor",
-                                style = MaterialTheme.typography.labelMedium.copy(
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                        Text(
+                            "$floor",
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                        }
+                        )
+                    }
 
-                        // 4 flat cells
-                        for (unit in 1..4) {
-                            val flatNumber = floor * 100 + unit
-                            val status = activity.statuses[flatNumber] ?: FlatStatus.EMPTY
+                    PercentageCell(
+                        percentage = pct,
+                        bgColor = bgColor,
+                        enabled = editMode,
+                        onClick = { if (editMode) onShowPercentageDialog(flatNumber) },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            } else {
+                val status = activity.statuses[flatNumber] ?: FlatStatus.EMPTY
 
-                            FlatCell(
-                                flatNumber = flatNumber,
-                                status = status,
-                                completeColor = completeColor,
-                                wipColor = wipColor,
-                                emptyColor = emptyColor,
-                                onClick = { onToggleFlat(flatNumber) },
-                                modifier = Modifier.weight(1f)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 1.5.dp),
+                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(40.dp)
+                            .height(44.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                            .then(
+                                if (editMode) Modifier.clickable { onToggleFloor(floor) }
+                                else Modifier
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "$floor",
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                        }
+                        )
+                    }
+
+                    FlatCell(
+                        flatNumber = floor, // Display floor number
+                        status = status,
+                        completeColor = completeColor,
+                        wipColor = wipColor,
+                        emptyColor = emptyColor,
+                        onClick = { if (editMode) onToggleFloor(floor) },
+                        showAsFloor = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FlatBasedGrid(
+    activity: Activity,
+    editMode: Boolean,
+    completeColor: Color,
+    wipColor: Color,
+    emptyColor: Color,
+    onToggleFlat: (Int) -> Unit,
+    onToggleFloor: (Int) -> Unit,
+    onShowPercentageDialog: (Int) -> Unit
+) {
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 8.dp),
+        contentPadding = PaddingValues(bottom = 16.dp)
+    ) {
+        // Column headers
+        item {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                Box(
+                    modifier = Modifier.width(40.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "FL",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 10.sp
+                        )
+                    )
+                }
+                for (unit in 1..4) {
+                    Box(
+                        modifier = Modifier.weight(1f),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "0$unit",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 10.sp
+                            )
+                        )
                     }
                 }
             }
         }
+
+        // Floors 34 down to 2
+        items(33) { reverseIndex ->
+            val floor = 34 - reverseIndex
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 1.5.dp),
+                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Floor label
+                Box(
+                    modifier = Modifier
+                        .width(40.dp)
+                        .height(44.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        )
+                        .then(
+                            if (editMode) Modifier.clickable { onToggleFloor(floor) }
+                            else Modifier
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "$floor",
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    )
+                }
+
+                // 4 flat cells
+                for (unit in 1..4) {
+                    val flatNumber = floor * 100 + unit
+
+                    if (activity.usePercentage) {
+                        val pct = activity.percentages[flatNumber] ?: 0
+                        val bgColor = percentageColor(pct, completeColor, wipColor, emptyColor)
+                        PercentageCell(
+                            percentage = pct,
+                            bgColor = bgColor,
+                            enabled = editMode,
+                            onClick = { if (editMode) onShowPercentageDialog(flatNumber) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    } else {
+                        val status = activity.statuses[flatNumber] ?: FlatStatus.EMPTY
+                        FlatCell(
+                            flatNumber = flatNumber,
+                            status = status,
+                            completeColor = completeColor,
+                            wipColor = wipColor,
+                            emptyColor = emptyColor,
+                            onClick = { if (editMode) onToggleFlat(flatNumber) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun percentageColor(pct: Int, completeColor: Color, wipColor: Color, emptyColor: Color): Color {
+    return when {
+        pct >= 100 -> completeColor
+        pct > 0 -> wipColor
+        else -> emptyColor.copy(alpha = 0.55f)
+    }
+}
+
+@Composable
+private fun PercentageCell(
+    percentage: Int,
+    bgColor: Color,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val animatedColor by animateColorAsState(
+        targetValue = bgColor,
+        animationSpec = tween(200),
+        label = "pct_bg"
+    )
+
+    val textColor = when {
+        percentage >= 100 -> Color(0xFF1B3417)
+        percentage > 0 -> Color(0xFF3D3520)
+        else -> Color(0xFF3E1F18)
+    }
+
+    Box(
+        modifier = modifier
+            .height(44.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(animatedColor)
+            .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            if (percentage > 0) "$percentage%" else "—",
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontWeight = FontWeight.Medium,
+                color = textColor,
+                fontSize = 11.sp
+            ),
+            textAlign = TextAlign.Center
+        )
     }
 }
 
@@ -304,7 +648,8 @@ private fun FlatCell(
     wipColor: Color,
     emptyColor: Color,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    showAsFloor: Boolean = false
 ) {
     val backgroundColor by animateColorAsState(
         targetValue = when (status) {
@@ -322,6 +667,12 @@ private fun FlatCell(
         FlatStatus.EMPTY -> Color(0xFF3E1F18)    // dark on salmon
     }
 
+    val label = when (status) {
+        FlatStatus.COMPLETE -> if (showAsFloor) "✓" else "$flatNumber"
+        FlatStatus.WIP -> if (showAsFloor) "WIP" else "$flatNumber"
+        FlatStatus.EMPTY -> if (showAsFloor) "—" else "$flatNumber"
+    }
+
     Box(
         modifier = modifier
             .height(44.dp)
@@ -331,11 +682,11 @@ private fun FlatCell(
         contentAlignment = Alignment.Center
     ) {
         Text(
-            "$flatNumber",
+            label,
             style = MaterialTheme.typography.labelSmall.copy(
                 fontWeight = FontWeight.Medium,
                 color = textColor,
-                fontSize = 11.sp
+                fontSize = if (showAsFloor) 14.sp else 11.sp
             )
         )
     }

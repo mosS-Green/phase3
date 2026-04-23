@@ -14,12 +14,16 @@ data class Tower(
     val ongoingActivities: List<Activity>
         get() = activities.filter { it.isOngoing }
 
+    /** Get all unique group names from activities in this tower */
+    val groupNames: List<String>
+        get() = activities.map { it.groupName }.distinct()
+
     companion object {
         val GROUPS = listOf(
-            GroupInfo("Apartments (Pre Final Stage)", 3, 31, 0),
-            GroupInfo("Handing Over Stage", 32, 39, 1),
-            GroupInfo("Common Area", 40, 64, 2),
-            GroupInfo("External Façade & Painting", 65, 72, 3),
+            GroupInfo("Apartments (Pre Final Stage)", 3, 31, 0, isFloorBased = false),
+            GroupInfo("Handing Over Stage", 32, 39, 1, isFloorBased = false),
+            GroupInfo("Common Area", 40, 64, 2, isFloorBased = true),
+            GroupInfo("External Façade & Painting", 65, 72, 3, isFloorBased = false),
         )
 
         fun groupForRow(row: Int): GroupInfo? = GROUPS.find { row in it.startRow..it.endRow }
@@ -30,5 +34,6 @@ data class GroupInfo(
     val name: String,
     val startRow: Int,
     val endRow: Int,
-    val index: Int
+    val index: Int,
+    val isFloorBased: Boolean = false
 )

@@ -2,6 +2,7 @@ package com.phase3.tracker.viewmodel
 
 import android.app.Application
 import android.content.ContentValues
+import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
@@ -9,13 +10,16 @@ import android.os.Environment
 import android.provider.MediaStore
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.phase3.tracker.data.CellUpdate
 import com.phase3.tracker.data.ExcelManager
 import com.phase3.tracker.data.GoogleSync
 import com.phase3.tracker.model.Activity
 import com.phase3.tracker.model.FlatStatus
 import com.phase3.tracker.model.Tower
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -49,8 +53,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _syncDone = MutableStateFlow(false)
     val syncDone: StateFlow<Boolean> = _syncDone.asStateFlow()
 
-    private var pendingSyncCount = 0
-    private val syncCountLock = Any()
+    // Edit mode — persisted via SharedPreferences, default OFF
+    private val prefs = application.getSharedPreferences("phase3_settings", Context.MODE_PRIVATE)
+    private val _editMode = MutableStateFlow(prefs.getBoolean("edit_mode", false))
+    val editMode: StateFlow<Boolean> = _editMode.asStateFlow()
+
+    fun toggleEditMode() {
+        val newValue = !_editMode.value
+        _editMode.value = newValue
+        prefs.edit().putBoolean("edit_mode", newValue).apply()
+    }
+
+    fun setEditMode(enabled: Boolean) {
+        _editMode.value = enabled
+        prefs.edit().putBoolean("edit_mode", enabled).apply()
+    }
 
     // Filter states
     enum class StatusFilter { COMPLETED, ONGOING, EMPTY }
@@ -67,49 +84,91 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val excelFile: File
         get() = File(getApplication<Application>().filesDir, "Ph-03 Tower Internal Finishing Work.xlsx")
 
-    data class UpdateRequest(val sheetName: String, val row: Int, val col: Int, val value: String)
-    private val updateChannel = Channel<UpdateRequest>(Channel.UNLIMITED)
+    // ── Batched sync system ─────────────────────────────────────────
+    private val pendingUpdates = mutableListOf<CellUpdate>()
+    private val pendingLock = Any()
+    private var flushJob: Job? = null
+
+    companion object {
+        private const val BATCH_DEBOUNCE_MS = 500L
+        private const val BATCH_CHUNK_SIZE = 50
+        private const val MAX_PARALLEL_CHUNKS = 5
+    }
 
     init {
         loadExcel()
-
-        // Background worker for robust sequential webhook updates
-        viewModelScope.launch(Dispatchers.IO) {
-            for (request in updateChannel) {
-                try {
-                    delay(50)
-                    val result = googleSync.updateCell(request.sheetName, request.row, request.col, request.value)
-                    result.onFailure {
-                        _statusMessage.value = "Sync failed: ${it.message}"
-                    }
-                } catch (e: Exception) {
-                    _statusMessage.value = "Sync queue error: ${e.message}"
-                } finally {
-                    val remaining = synchronized(syncCountLock) {
-                        pendingSyncCount--
-                        pendingSyncCount
-                    }
-                    if (remaining <= 0) {
-                        _isSyncing.value = false
-                        _syncDone.value = true
-                        // Reset the done indicator after a delay
-                        viewModelScope.launch {
-                            delay(3000)
-                            _syncDone.value = false
-                        }
-                    }
-                }
-            }
-        }
     }
 
     private fun enqueueUpdate(sheetName: String, row: Int, col: Int, value: String) {
-        synchronized(syncCountLock) {
-            pendingSyncCount++
+        synchronized(pendingLock) {
+            pendingUpdates.add(CellUpdate(sheetName, row, col, value))
         }
         _isSyncing.value = true
         _syncDone.value = false
-        updateChannel.trySend(UpdateRequest(sheetName, row, col, value))
+
+        // Debounce: reset the flush timer on each new update
+        flushJob?.cancel()
+        flushJob = viewModelScope.launch {
+            delay(BATCH_DEBOUNCE_MS)
+            flushPendingUpdates()
+        }
+    }
+
+    private suspend fun flushPendingUpdates() {
+        val updates: List<CellUpdate>
+        synchronized(pendingLock) {
+            updates = pendingUpdates.toList()
+            pendingUpdates.clear()
+        }
+
+        if (updates.isEmpty()) {
+            _isSyncing.value = false
+            return
+        }
+
+        withContext(Dispatchers.IO) {
+            try {
+                // Split into chunks and fire in parallel
+                val chunks = updates.chunked(BATCH_CHUNK_SIZE)
+                val deferreds = chunks.take(MAX_PARALLEL_CHUNKS).map { chunk ->
+                    async {
+                        val result = googleSync.batchUpdateCells(chunk)
+                        result.onFailure { e ->
+                            // Fallback: try individual updates for this chunk
+                            for (update in chunk) {
+                                try {
+                                    googleSync.updateCell(update.sheetName, update.row, update.col, update.value)
+                                } catch (_: Exception) { }
+                            }
+                        }
+                    }
+                }
+                deferreds.awaitAll()
+
+                // If there were more than MAX_PARALLEL_CHUNKS, process remaining
+                if (chunks.size > MAX_PARALLEL_CHUNKS) {
+                    for (i in MAX_PARALLEL_CHUNKS until chunks.size) {
+                        val result = googleSync.batchUpdateCells(chunks[i])
+                        result.onFailure {
+                            for (update in chunks[i]) {
+                                try {
+                                    googleSync.updateCell(update.sheetName, update.row, update.col, update.value)
+                                } catch (_: Exception) { }
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                _statusMessage.value = "Sync error: ${e.message}"
+            } finally {
+                _isSyncing.value = false
+                _syncDone.value = true
+                viewModelScope.launch {
+                    delay(3000)
+                    _syncDone.value = false
+                }
+            }
+        }
     }
 
     fun loadExcel() {
@@ -142,6 +201,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val towersList = _towers.value.toMutableList()
         val tower = towersList.getOrNull(towerIndex) ?: return
         val activity = tower.activities.getOrNull(activityIndex) ?: return
+
+        if (activity.isFloorBased) {
+            // For floor-based, toggle all flats on the floor together
+            val floor = flatNumber / 100
+            toggleFloorStatus(towerIndex, activityIndex, floor)
+            return
+        }
 
         val currentStatus = activity.statuses[flatNumber] ?: FlatStatus.EMPTY
         val newStatus = currentStatus.next()
@@ -200,26 +266,76 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _towers.value = towersList.toList()
     }
 
-    fun addActivity(towerIndex: Int, activityName: String, contractor: String = "", categories: List<String> = emptyList()) {
+    fun updateFlatPercentage(towerIndex: Int, activityIndex: Int, flatNumber: Int, percentage: Int) {
+        val towersList = _towers.value.toMutableList()
+        val tower = towersList.getOrNull(towerIndex) ?: return
+        val activity = tower.activities.getOrNull(activityIndex) ?: return
+
+        val clamped = percentage.coerceIn(0, 100)
+        val newPercentages = activity.percentages.toMutableMap()
+
+        if (activity.isFloorBased) {
+            // Update all 4 flats on the floor
+            val floor = flatNumber / 100
+            val flatsOnFloor = (1..4).map { floor * 100 + it }
+            for (flatNum in flatsOnFloor) {
+                newPercentages[flatNum] = clamped
+                val colIdx = ExcelManager.flatToColIndex(flatNum)
+                enqueueUpdate(tower.sheetName, activity.rowIndex, colIdx + 1, clamped.toString())
+                excelManager.updatePercentage(tower.sheetName, activity.rowIndex, flatNum, clamped)
+            }
+        } else {
+            newPercentages[flatNumber] = clamped
+            val colIdx = ExcelManager.flatToColIndex(flatNumber)
+            enqueueUpdate(tower.sheetName, activity.rowIndex, colIdx + 1, clamped.toString())
+            excelManager.updatePercentage(tower.sheetName, activity.rowIndex, flatNumber, clamped)
+        }
+
+        val newActivity = activity.copy(percentages = newPercentages)
+        val newActivities = tower.activities.toMutableList()
+        newActivities[activityIndex] = newActivity
+
+        val newTower = tower.copy(activities = newActivities)
+        towersList[towerIndex] = newTower
+
+        _towers.value = towersList.toList()
+    }
+
+    fun addActivity(
+        towerIndex: Int,
+        activityName: String,
+        contractor: String = "",
+        categories: List<String> = emptyList(),
+        groupName: String = "",
+        usePercentage: Boolean = false
+    ) {
         viewModelScope.launch {
             val towersList = _towers.value.toMutableList()
             val tower = towersList.getOrNull(towerIndex) ?: return@launch
             val categoryStr = Activity.serializeCategories(categories)
             withContext(Dispatchers.IO) {
-                val newRow = excelManager.addActivity(tower.sheetName, activityName, contractor, categoryStr)
+                val newRow = excelManager.addActivity(tower.sheetName, activityName, contractor, categoryStr, groupName)
                 if (newRow > 0) {
-                    val group = Tower.groupForRow(newRow)
+                    val resolvedGroup = groupName.ifBlank { Tower.groupForRow(newRow)?.name ?: "Other" }
+                    val isFloorBased = resolvedGroup.contains("Common", ignoreCase = true)
                     val statuses = mutableMapOf<Int, FlatStatus>()
-                    ExcelManager.FLAT_NUMBERS.forEach { statuses[it] = FlatStatus.EMPTY }
+                    val percentages = mutableMapOf<Int, Int>()
+                    ExcelManager.FLAT_NUMBERS.forEach {
+                        statuses[it] = FlatStatus.EMPTY
+                        if (usePercentage) percentages[it] = 0
+                    }
 
                     val newActivity = Activity(
                         name = activityName,
                         rowIndex = newRow,
-                        groupName = group?.name ?: "Other",
-                        groupIndex = group?.index ?: 0,
+                        groupName = resolvedGroup,
+                        groupIndex = Activity.groupIndexFor(resolvedGroup),
                         contractor = contractor,
                         categories = categories,
-                        statuses = statuses
+                        usePercentage = usePercentage,
+                        isFloorBased = isFloorBased,
+                        statuses = statuses,
+                        percentages = percentages
                     )
                     
                     val newActivities = tower.activities.toMutableList().apply { add(newActivity) }
@@ -228,7 +344,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                     _towers.value = towersList.toList()
                     
-                    // Push name, contractor, category to Google Sheets
+                    // Push metadata to Google Sheets
+                    enqueueUpdate(tower.sheetName, newRow, 1, groupName) // col A
                     enqueueUpdate(tower.sheetName, newRow, 2, activityName) // col B
                     enqueueUpdate(tower.sheetName, newRow, 3, contractor) // col C
                     enqueueUpdate(tower.sheetName, newRow, 4, categoryStr) // col D
@@ -238,19 +355,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun renameActivity(towerIndex: Int, activityIndex: Int, newName: String, contractor: String = "", categories: List<String> = emptyList()) {
+    fun renameActivity(
+        towerIndex: Int,
+        activityIndex: Int,
+        newName: String,
+        contractor: String = "",
+        categories: List<String> = emptyList(),
+        groupName: String = "",
+        usePercentage: Boolean = false
+    ) {
         viewModelScope.launch {
             val towersList = _towers.value.toMutableList()
             val tower = towersList.getOrNull(towerIndex) ?: return@launch
             val activity = tower.activities.getOrNull(activityIndex) ?: return@launch
             val categoryStr = Activity.serializeCategories(categories)
             withContext(Dispatchers.IO) {
-                excelManager.renameActivity(tower.sheetName, activity.rowIndex, newName, contractor, categoryStr)
+                excelManager.renameActivity(tower.sheetName, activity.rowIndex, newName, contractor, categoryStr, groupName)
                 
+                val resolvedGroup = groupName.ifBlank { activity.groupName }
+                val isFloorBased = resolvedGroup.contains("Common", ignoreCase = true)
+
                 val newActivity = activity.copy(
                     name = newName,
                     contractor = contractor,
-                    categories = categories
+                    categories = categories,
+                    groupName = resolvedGroup,
+                    groupIndex = Activity.groupIndexFor(resolvedGroup),
+                    usePercentage = usePercentage,
+                    isFloorBased = isFloorBased
                 )
                 val newActivities = tower.activities.toMutableList()
                 newActivities[activityIndex] = newActivity
@@ -260,6 +392,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _towers.value = towersList.toList()
                 
                 // Push changes
+                enqueueUpdate(tower.sheetName, activity.rowIndex, 1, resolvedGroup) // col A
                 enqueueUpdate(tower.sheetName, activity.rowIndex, 2, newName) // col B
                 enqueueUpdate(tower.sheetName, activity.rowIndex, 3, contractor) // col C
                 enqueueUpdate(tower.sheetName, activity.rowIndex, 4, categoryStr) // col D
@@ -373,6 +506,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .filter { it.isNotBlank() }
             .distinct()
             .sorted()
+    }
+
+    /** Get all unique group names across all towers */
+    fun getAllGroupNames(): List<String> {
+        val fromData = _towers.value
+            .flatMap { it.activities }
+            .map { it.groupName }
+            .filter { it.isNotBlank() }
+            .distinct()
+
+        val defaults = Activity.DEFAULT_GROUP_NAMES
+        return (fromData + defaults).distinct().sorted()
     }
 
     /** Apply filters to get the filtered list of activities for a tower */
