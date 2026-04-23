@@ -6,7 +6,6 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
@@ -20,9 +19,9 @@ data class CellUpdate(
 class GoogleSync {
 
     private val client = OkHttpClient.Builder()
-        .connectTimeout(60, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .writeTimeout(60, TimeUnit.SECONDS)
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
         .followRedirects(true)
         .followSslRedirects(true)
         .build()
@@ -50,7 +49,10 @@ class GoogleSync {
         }
     }
 
-    /** Single cell update — the proven working method */
+    /**
+     * Single cell update — the proven working method.
+     * Only checks HTTP success (same as original working code).
+     */
     suspend fun updateCell(sheetName: String, row: Int, col: Int, value: String): Result<Unit> = withContext(Dispatchers.IO) {
         try {
             val payload = JSONObject().apply {
@@ -68,83 +70,15 @@ class GoogleSync {
                 .build()
                 
             val response = client.newCall(request).execute()
-            val responseBody = response.body?.string() ?: ""
+            response.body?.close()
 
-            // Validate that the response is actually from our script
-            if (response.isSuccessful && isValidScriptResponse(responseBody)) {
+            if (response.isSuccessful) {
                 Result.success(Unit)
-            } else if (response.isSuccessful) {
-                // Got 200 but response doesn't look like our script's JSON
-                Result.failure(Exception("Invalid response: $responseBody"))
             } else {
-                Result.failure(Exception("HTTP ${response.code}: $responseBody"))
+                Result.failure(Exception("HTTP ${response.code}"))
             }
         } catch (e: Exception) {
             Result.failure(e)
-        }
-    }
-
-    /**
-     * Batch update multiple cells in a single HTTP request.
-     * Returns Result.failure if batch endpoint isn't available.
-     */
-    suspend fun batchUpdateCells(updates: List<CellUpdate>): Result<Unit> = withContext(Dispatchers.IO) {
-        if (updates.isEmpty()) return@withContext Result.success(Unit)
-
-        try {
-            val updatesArray = JSONArray()
-            for (u in updates) {
-                val obj = JSONObject().apply {
-                    put("sheetName", u.sheetName)
-                    put("row", u.row)
-                    put("col", u.col)
-                    put("value", u.value)
-                }
-                updatesArray.put(obj)
-            }
-
-            val payload = JSONObject().apply {
-                put("action", "batchUpdate")
-                put("updates", updatesArray)
-            }
-
-            val body = payload.toString().toRequestBody("text/plain;charset=utf-8".toMediaType())
-            val request = Request.Builder()
-                .url(webhookUrl)
-                .post(body)
-                .build()
-
-            val response = client.newCall(request).execute()
-            val responseBody = response.body?.string() ?: ""
-
-            if (response.isSuccessful && isValidBatchResponse(responseBody)) {
-                Result.success(Unit)
-            } else {
-                // Batch not supported or failed — caller should fall back
-                Result.failure(Exception("Batch unsupported or failed: $responseBody"))
-            }
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
-
-    /** Check if response is valid JSON from our Apps Script with status "ok" */
-    private fun isValidScriptResponse(body: String): Boolean {
-        return try {
-            val json = JSONObject(body)
-            json.optString("status") == "ok"
-        } catch (_: Exception) {
-            false
-        }
-    }
-
-    /** Check specifically for a valid batchUpdate response */
-    private fun isValidBatchResponse(body: String): Boolean {
-        return try {
-            val json = JSONObject(body)
-            json.optString("status") == "ok" && json.optString("action") == "batchUpdate"
-        } catch (_: Exception) {
-            false
         }
     }
 }

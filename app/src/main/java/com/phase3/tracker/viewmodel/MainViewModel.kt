@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
@@ -85,15 +86,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val excelFile: File
         get() = File(getApplication<Application>().filesDir, "Ph-03 Tower Internal Finishing Work.xlsx")
 
-    // ── Batched sync system ─────────────────────────────────────────
+    // ── Parallel sync system ────────────────────────────────────────
+    // Debounces updates for 500ms, then fires all pending updates
+    // using 5 concurrent individual updateCell calls (proven endpoint).
     private val pendingUpdates = mutableListOf<CellUpdate>()
     private val pendingLock = Any()
     private var debounceJob: Job? = null
+    private val syncSemaphore = Semaphore(5) // max 5 concurrent HTTP calls
 
     companion object {
-        private const val BATCH_DEBOUNCE_MS = 500L
-        private const val BATCH_CHUNK_SIZE = 50
-        private const val MAX_PARALLEL_CHUNKS = 5
+        private const val DEBOUNCE_MS = 500L
     }
 
     init {
@@ -107,11 +109,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _isSyncing.value = true
         _syncDone.value = false
 
-        // Only cancel the debounce delay — NOT any running sync
+        // Only cancel the debounce delay — not any running sync
         debounceJob?.cancel()
         debounceJob = viewModelScope.launch {
-            delay(BATCH_DEBOUNCE_MS)
-            // Launch flush in a separate coroutine so future debounce cancels don't kill it
+            delay(DEBOUNCE_MS)
+            // Launch flush in a separate scope so debounce cancel doesn't kill it
             viewModelScope.launch { flushPendingUpdates() }
         }
     }
@@ -133,55 +135,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        // Use NonCancellable so in-flight HTTP calls survive debounce cancellation
+        // NonCancellable: survive any future debounce cancellations
         withContext(NonCancellable + Dispatchers.IO) {
+            var failCount = 0
             try {
-                // Split into chunks and fire in parallel
-                val chunks = updates.chunked(BATCH_CHUNK_SIZE)
-
-                for (chunkBatch in chunks.chunked(MAX_PARALLEL_CHUNKS)) {
-                    val deferreds = chunkBatch.map { chunk ->
-                        async {
-                            val batchResult = googleSync.batchUpdateCells(chunk)
-                            if (batchResult.isFailure) {
-                                // Fallback to individual updates
-                                for (update in chunk) {
-                                    val singleResult = googleSync.updateCell(
-                                        update.sheetName, update.row, update.col, update.value
-                                    )
-                                    if (singleResult.isFailure) {
-                                        // Re-enqueue failed update for retry
-                                        synchronized(pendingLock) {
-                                            pendingUpdates.add(update)
-                                        }
-                                    }
-                                }
+                // Fire ALL updates concurrently, semaphore limits to 5 at a time
+                val jobs = updates.map { update ->
+                    async {
+                        syncSemaphore.acquire()
+                        try {
+                            val result = googleSync.updateCell(
+                                update.sheetName, update.row, update.col, update.value
+                            )
+                            if (result.isFailure) {
+                                failCount++
                             }
+                        } finally {
+                            syncSemaphore.release()
                         }
                     }
-                    deferreds.awaitAll()
                 }
+                jobs.awaitAll()
 
-                // Check if any updates were re-enqueued for retry
-                val hasRetries = synchronized(pendingLock) { pendingUpdates.isNotEmpty() }
-                if (hasRetries) {
-                    _statusMessage.value = "Some updates failed — will retry"
-                    // Schedule a retry after a delay
-                    delay(2000)
-                    flushPendingUpdates()
-                    return@withContext
+                if (failCount > 0) {
+                    _statusMessage.value = "$failCount update(s) failed"
                 }
             } catch (e: Exception) {
                 _statusMessage.value = "Sync error: ${e.message}"
             } finally {
-                val stillPending = synchronized(pendingLock) { pendingUpdates.isNotEmpty() }
-                if (!stillPending) {
-                    _isSyncing.value = false
-                    _syncDone.value = true
-                    viewModelScope.launch {
-                        delay(3000)
-                        _syncDone.value = false
-                    }
+                _isSyncing.value = false
+                _syncDone.value = true
+                viewModelScope.launch {
+                    delay(3000)
+                    _syncDone.value = false
                 }
             }
         }
