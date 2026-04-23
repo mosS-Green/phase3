@@ -12,16 +12,21 @@ data class Activity(
     val statuses: MutableMap<Int, FlatStatus>,  // flatNumber -> status
     val percentages: MutableMap<Int, Int> = mutableMapOf()  // flatNumber -> 0-100
 ) {
+    /** All relevant flat/floor keys for this activity */
+    private val relevantSlots: List<Int>
+        get() = if (isFloorBased) {
+            statuses.keys.filter { it % 100 == 1 }.toList()
+        } else {
+            statuses.keys.toList()
+        }
+
     val completionPercent: Float
         get() {
             if (usePercentage) {
-                val relevantKeys = if (isFloorBased) {
-                    percentages.keys.filter { it % 100 == 1 }
-                } else {
-                    percentages.keys.toList()
-                }
-                if (relevantKeys.isEmpty()) return 0f
-                return relevantKeys.mapNotNull { percentages[it] }.average().toFloat()
+                val slots = relevantSlots
+                if (slots.isEmpty()) return 0f
+                // Missing entries default to 0 — blanks count as 0%
+                return slots.map { (percentages[it] ?: 0).toFloat() }.average().toFloat()
             }
             val relevantStatuses = if (isFloorBased) {
                 statuses.filter { it.key % 100 == 1 }.values
@@ -36,15 +41,10 @@ data class Activity(
     val wipPercent: Float
         get() {
             if (usePercentage) {
-                // For percentage mode, WIP = cells between 1-99%
-                val relevantKeys = if (isFloorBased) {
-                    percentages.keys.filter { it % 100 == 1 }
-                } else {
-                    percentages.keys.toList()
-                }
-                if (relevantKeys.isEmpty()) return 0f
-                val wip = relevantKeys.count { (percentages[it] ?: 0) in 1..99 }
-                return wip.toFloat() / relevantKeys.size * 100f
+                val slots = relevantSlots
+                if (slots.isEmpty()) return 0f
+                val wip = slots.count { (percentages[it] ?: 0) in 1..84 }
+                return wip.toFloat() / slots.size * 100f
             }
             val relevantStatuses = if (isFloorBased) {
                 statuses.filter { it.key % 100 == 1 }.values
@@ -59,14 +59,10 @@ data class Activity(
     val emptyPercent: Float
         get() {
             if (usePercentage) {
-                val relevantKeys = if (isFloorBased) {
-                    percentages.keys.filter { it % 100 == 1 }
-                } else {
-                    percentages.keys.toList()
-                }
-                if (relevantKeys.isEmpty()) return 0f
-                val empty = relevantKeys.count { (percentages[it] ?: 0) == 0 }
-                return empty.toFloat() / relevantKeys.size * 100f
+                val slots = relevantSlots
+                if (slots.isEmpty()) return 0f
+                val empty = slots.count { (percentages[it] ?: 0) == 0 }
+                return empty.toFloat() / slots.size * 100f
             }
             val relevantStatuses = if (isFloorBased) {
                 statuses.filter { it.key % 100 == 1 }.values
@@ -81,12 +77,8 @@ data class Activity(
     val isFullyComplete: Boolean
         get() {
             if (usePercentage) {
-                val relevantKeys = if (isFloorBased) {
-                    percentages.keys.filter { it % 100 == 1 }
-                } else {
-                    percentages.keys.toList()
-                }
-                return relevantKeys.isNotEmpty() && relevantKeys.all { (percentages[it] ?: 0) == 100 }
+                val slots = relevantSlots
+                return slots.isNotEmpty() && slots.all { (percentages[it] ?: 0) >= 85 }
             }
             val relevantStatuses = if (isFloorBased) {
                 statuses.filter { it.key % 100 == 1 }.values
@@ -99,12 +91,8 @@ data class Activity(
     val isFullyEmpty: Boolean
         get() {
             if (usePercentage) {
-                val relevantKeys = if (isFloorBased) {
-                    percentages.keys.filter { it % 100 == 1 }
-                } else {
-                    percentages.keys.toList()
-                }
-                return relevantKeys.isEmpty() || relevantKeys.all { (percentages[it] ?: 0) == 0 }
+                val slots = relevantSlots
+                return slots.isEmpty() || slots.all { (percentages[it] ?: 0) == 0 }
             }
             val relevantStatuses = if (isFloorBased) {
                 statuses.filter { it.key % 100 == 1 }.values

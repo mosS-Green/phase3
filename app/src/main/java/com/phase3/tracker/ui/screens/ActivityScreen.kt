@@ -192,9 +192,12 @@ fun ActivityScreen(
                 horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally)
             ) {
                 if (activity.usePercentage) {
-                    LegendItem(completeColor, "100%")
-                    LegendItem(wipColor, "1-99%")
-                    LegendItem(emptyColor.copy(alpha = 0.75f), "0%")
+                    val pctC = pctLevelColors(isDark)
+                    LegendItem(pctC[4], "85-100%")
+                    LegendItem(pctC[3], "51-84%")
+                    LegendItem(pctC[2], "26-50%")
+                    LegendItem(pctC[1], "1-25%")
+                    LegendItem(pctC[0], "0%")
                 } else {
                     LegendItem(completeColor, "Complete")
                     LegendItem(wipColor, "WIP")
@@ -212,18 +215,19 @@ fun ActivityScreen(
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
                 if (activity.usePercentage) {
-                    val relevantKeys = if (activity.isFloorBased) {
-                        activity.percentages.keys.filter { it % 100 == 1 }
+                    // Use statuses keys (covers ALL flats) — blanks default to 0%
+                    val slots = if (activity.isFloorBased) {
+                        activity.statuses.keys.filter { it % 100 == 1 }
                     } else {
-                        activity.percentages.keys.toList()
+                        activity.statuses.keys.toList()
                     }
-                    val done = relevantKeys.count { (activity.percentages[it] ?: 0) == 100 }
-                    val wip = relevantKeys.count { (activity.percentages[it] ?: 0) in 1..99 }
-                    val empty = relevantKeys.count { (activity.percentages[it] ?: 0) == 0 }
+                    val done = slots.count { (activity.percentages[it] ?: 0) >= 85 }
+                    val wip = slots.count { (activity.percentages[it] ?: 0) in 1..84 }
+                    val empty = slots.count { (activity.percentages[it] ?: 0) == 0 }
                     StatChip("${activity.completionPercent.toInt()}%", "Avg", completeColor)
-                    StatChip("$done", "Done", completeColor)
+                    StatChip("$done", "≥85%", completeColor)
                     StatChip("$wip", "WIP", wipColor)
-                    StatChip("$empty", "Pending", emptyColor)
+                    StatChip("$empty", "0%", emptyColor)
                 } else {
                     val relevantStatuses = if (activity.isFloorBased) {
                         activity.statuses.filter { it.key % 100 == 1 }
@@ -532,12 +536,25 @@ private fun FlatBasedGrid(
     }
 }
 
+/** Returns the 5-level color array: [level1..level5] for current theme */
+@Composable
+private fun pctLevelColors(isDark: Boolean): List<Color> {
+    return if (isDark) {
+        listOf(PctLevel1Dark, PctLevel2Dark, PctLevel3Dark, PctLevel4Dark, PctLevel5Dark)
+    } else {
+        listOf(PctLevel1, PctLevel2, PctLevel3, PctLevel4, PctLevel5)
+    }
+}
+
 @Composable
 private fun percentageColor(pct: Int, completeColor: Color, wipColor: Color, emptyColor: Color): Color {
+    val isDark = isSystemInDarkTheme()
     return when {
-        pct >= 100 -> completeColor
-        pct > 0 -> wipColor
-        else -> emptyColor.copy(alpha = 0.55f)
+        pct >= 85  -> if (isDark) PctLevel5Dark else PctLevel5
+        pct >= 51  -> if (isDark) PctLevel4Dark else PctLevel4
+        pct >= 26  -> if (isDark) PctLevel3Dark else PctLevel3
+        pct >= 1   -> if (isDark) PctLevel2Dark else PctLevel2
+        else       -> if (isDark) PctLevel1Dark else PctLevel1
     }
 }
 
@@ -556,9 +573,11 @@ private fun PercentageCell(
     )
 
     val textColor = when {
-        percentage >= 100 -> Color(0xFF1B3417)
-        percentage > 0 -> Color(0xFF3D3520)
-        else -> Color(0xFF3E1F18)
+        percentage >= 85 -> Color(0xFF1B3417)   // dark green text on green bg
+        percentage >= 51 -> Color(0xFF2B3D1F)   // dark sage text
+        percentage >= 26 -> Color(0xFF3D3520)   // dark amber text
+        percentage >= 1  -> Color(0xFF3E2A18)   // dark peach text
+        else             -> Color(0xFF3E1F18)   // dark salmon text
     }
 
     Box(
