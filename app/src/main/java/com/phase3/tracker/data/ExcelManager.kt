@@ -92,12 +92,20 @@ class ExcelManager {
                 val group = Tower.groupForRow(excelRow)
 
                 // Read group/classification from column A, fall back to row-range detection
+                // Column A may encode usePercentage flag: "GroupName|%" means percentage mode
                 val groupFromExcel = getCellString(row, GROUP_COL)
-                val groupName = if (!groupFromExcel.isNullOrBlank()) {
-                    groupFromExcel
+                var usePercentageFromCol = false
+                val cleanGroupFromExcel = if (!groupFromExcel.isNullOrBlank()) {
+                    if (groupFromExcel.endsWith("|%")) {
+                        usePercentageFromCol = true
+                        groupFromExcel.removeSuffix("|%").trim()
+                    } else {
+                        groupFromExcel.trim()
+                    }
                 } else {
-                    group?.name ?: "Other"
+                    null
                 }
+                val groupName = cleanGroupFromExcel ?: group?.name ?: "Other"
                 val groupIndex = Activity.groupIndexFor(groupName)
                 val isFloorBased = group?.isFloorBased ?: groupName.contains("Common", ignoreCase = true)
 
@@ -107,8 +115,9 @@ class ExcelManager {
                 val categories = Activity.parseCategories(categoryRaw)
 
                 // Determine if this activity uses percentage tracking
-                // Convention: if any flat cell has a numeric value (not "C"/"W"/""), it's percentage-based
-                var hasPercentage = false
+                // Method 1: Column A flag "|%" takes priority
+                // Method 2: If any flat cell has a numeric value, infer percentage mode
+                var hasPercentage = usePercentageFromCol
                 val statuses = mutableMapOf<Int, FlatStatus>()
                 val percentages = mutableMapOf<Int, Int>()
 

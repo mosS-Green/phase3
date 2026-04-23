@@ -23,6 +23,8 @@ class GoogleSync {
         .connectTimeout(60, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
+        .followRedirects(true)
+        .followSslRedirects(true)
         .build()
 
     private val webhookUrl = "https://script.google.com/macros/s/AKfycbwvGJpoGHqqeB1Bwkbcoj_EDz-TmF__tVmd1iRX6OLKOZx5Uhz3uxwt0FQ3YXBR9qEKPA/exec"
@@ -48,7 +50,7 @@ class GoogleSync {
         }
     }
 
-    /** Single cell update (legacy fallback) */
+    /** Single cell update — the proven working method */
     suspend fun updateCell(sheetName: String, row: Int, col: Int, value: String): Result<Unit> = withContext(Dispatchers.IO) {
         try {
             val payload = JSONObject().apply {
@@ -67,10 +69,15 @@ class GoogleSync {
                 
             val response = client.newCall(request).execute()
             val responseBody = response.body?.string() ?: ""
-            if (response.isSuccessful) {
+
+            // Validate that the response is actually from our script
+            if (response.isSuccessful && isValidScriptResponse(responseBody)) {
                 Result.success(Unit)
+            } else if (response.isSuccessful) {
+                // Got 200 but response doesn't look like our script's JSON
+                Result.failure(Exception("Invalid response: $responseBody"))
             } else {
-                Result.failure(Exception("Webhook returned ${response.code}: $responseBody"))
+                Result.failure(Exception("HTTP ${response.code}: $responseBody"))
             }
         } catch (e: Exception) {
             Result.failure(e)
@@ -79,8 +86,7 @@ class GoogleSync {
 
     /**
      * Batch update multiple cells in a single HTTP request.
-     * Requires the Google Apps Script to support action="batchUpdate".
-     * Falls back to sequential single-cell updates if batch fails.
+     * Returns Result.failure if batch endpoint isn't available.
      */
     suspend fun batchUpdateCells(updates: List<CellUpdate>): Result<Unit> = withContext(Dispatchers.IO) {
         if (updates.isEmpty()) return@withContext Result.success(Unit)
@@ -111,14 +117,34 @@ class GoogleSync {
             val response = client.newCall(request).execute()
             val responseBody = response.body?.string() ?: ""
 
-            if (response.isSuccessful) {
+            if (response.isSuccessful && isValidBatchResponse(responseBody)) {
                 Result.success(Unit)
             } else {
-                // If batch not supported, fall back to sequential
-                Result.failure(Exception("Batch update returned ${response.code}: $responseBody"))
+                // Batch not supported or failed — caller should fall back
+                Result.failure(Exception("Batch unsupported or failed: $responseBody"))
             }
         } catch (e: Exception) {
             Result.failure(e)
+        }
+    }
+
+    /** Check if response is valid JSON from our Apps Script with status "ok" */
+    private fun isValidScriptResponse(body: String): Boolean {
+        return try {
+            val json = JSONObject(body)
+            json.optString("status") == "ok"
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /** Check specifically for a valid batchUpdate response */
+    private fun isValidBatchResponse(body: String): Boolean {
+        return try {
+            val json = JSONObject(body)
+            json.optString("status") == "ok" && json.optString("action") == "batchUpdate"
+        } catch (_: Exception) {
+            false
         }
     }
 }

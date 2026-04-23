@@ -18,6 +18,7 @@ import com.phase3.tracker.model.FlatStatus
 import com.phase3.tracker.model.Tower
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
@@ -87,7 +88,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ── Batched sync system ─────────────────────────────────────────
     private val pendingUpdates = mutableListOf<CellUpdate>()
     private val pendingLock = Any()
-    private var flushJob: Job? = null
+    private var debounceJob: Job? = null
 
     companion object {
         private const val BATCH_DEBOUNCE_MS = 500L
@@ -106,12 +107,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _isSyncing.value = true
         _syncDone.value = false
 
-        // Debounce: reset the flush timer on each new update
-        flushJob?.cancel()
-        flushJob = viewModelScope.launch {
+        // Only cancel the debounce delay — NOT any running sync
+        debounceJob?.cancel()
+        debounceJob = viewModelScope.launch {
             delay(BATCH_DEBOUNCE_MS)
-            flushPendingUpdates()
+            // Launch flush in a separate coroutine so future debounce cancels don't kill it
+            viewModelScope.launch { flushPendingUpdates() }
         }
+    }
+
+    /** Encode group name + usePercentage flag for Excel column A */
+    private fun encodeGroupColumn(groupName: String, usePercentage: Boolean): String {
+        return if (usePercentage) "$groupName|%" else groupName
     }
 
     private suspend fun flushPendingUpdates() {
@@ -126,46 +133,55 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        withContext(Dispatchers.IO) {
+        // Use NonCancellable so in-flight HTTP calls survive debounce cancellation
+        withContext(NonCancellable + Dispatchers.IO) {
             try {
                 // Split into chunks and fire in parallel
                 val chunks = updates.chunked(BATCH_CHUNK_SIZE)
-                val deferreds = chunks.take(MAX_PARALLEL_CHUNKS).map { chunk ->
-                    async {
-                        val result = googleSync.batchUpdateCells(chunk)
-                        result.onFailure { e ->
-                            // Fallback: try individual updates for this chunk
-                            for (update in chunk) {
-                                try {
-                                    googleSync.updateCell(update.sheetName, update.row, update.col, update.value)
-                                } catch (_: Exception) { }
-                            }
-                        }
-                    }
-                }
-                deferreds.awaitAll()
 
-                // If there were more than MAX_PARALLEL_CHUNKS, process remaining
-                if (chunks.size > MAX_PARALLEL_CHUNKS) {
-                    for (i in MAX_PARALLEL_CHUNKS until chunks.size) {
-                        val result = googleSync.batchUpdateCells(chunks[i])
-                        result.onFailure {
-                            for (update in chunks[i]) {
-                                try {
-                                    googleSync.updateCell(update.sheetName, update.row, update.col, update.value)
-                                } catch (_: Exception) { }
+                for (chunkBatch in chunks.chunked(MAX_PARALLEL_CHUNKS)) {
+                    val deferreds = chunkBatch.map { chunk ->
+                        async {
+                            val batchResult = googleSync.batchUpdateCells(chunk)
+                            if (batchResult.isFailure) {
+                                // Fallback to individual updates
+                                for (update in chunk) {
+                                    val singleResult = googleSync.updateCell(
+                                        update.sheetName, update.row, update.col, update.value
+                                    )
+                                    if (singleResult.isFailure) {
+                                        // Re-enqueue failed update for retry
+                                        synchronized(pendingLock) {
+                                            pendingUpdates.add(update)
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
+                    deferreds.awaitAll()
+                }
+
+                // Check if any updates were re-enqueued for retry
+                val hasRetries = synchronized(pendingLock) { pendingUpdates.isNotEmpty() }
+                if (hasRetries) {
+                    _statusMessage.value = "Some updates failed — will retry"
+                    // Schedule a retry after a delay
+                    delay(2000)
+                    flushPendingUpdates()
+                    return@withContext
                 }
             } catch (e: Exception) {
                 _statusMessage.value = "Sync error: ${e.message}"
             } finally {
-                _isSyncing.value = false
-                _syncDone.value = true
-                viewModelScope.launch {
-                    delay(3000)
-                    _syncDone.value = false
+                val stillPending = synchronized(pendingLock) { pendingUpdates.isNotEmpty() }
+                if (!stillPending) {
+                    _isSyncing.value = false
+                    _syncDone.value = true
+                    viewModelScope.launch {
+                        delay(3000)
+                        _syncDone.value = false
+                    }
                 }
             }
         }
@@ -313,8 +329,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val towersList = _towers.value.toMutableList()
             val tower = towersList.getOrNull(towerIndex) ?: return@launch
             val categoryStr = Activity.serializeCategories(categories)
+            val groupCol = encodeGroupColumn(groupName, usePercentage)
             withContext(Dispatchers.IO) {
-                val newRow = excelManager.addActivity(tower.sheetName, activityName, contractor, categoryStr, groupName)
+                val newRow = excelManager.addActivity(tower.sheetName, activityName, contractor, categoryStr, groupCol)
                 if (newRow > 0) {
                     val resolvedGroup = groupName.ifBlank { Tower.groupForRow(newRow)?.name ?: "Other" }
                     val isFloorBased = resolvedGroup.contains("Common", ignoreCase = true)
@@ -344,8 +361,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                     _towers.value = towersList.toList()
                     
-                    // Push metadata to Google Sheets
-                    enqueueUpdate(tower.sheetName, newRow, 1, groupName) // col A
+                    // Push metadata to Google Sheets (col A includes % flag)
+                    enqueueUpdate(tower.sheetName, newRow, 1, groupCol) // col A = group|%
                     enqueueUpdate(tower.sheetName, newRow, 2, activityName) // col B
                     enqueueUpdate(tower.sheetName, newRow, 3, contractor) // col C
                     enqueueUpdate(tower.sheetName, newRow, 4, categoryStr) // col D
@@ -369,11 +386,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val tower = towersList.getOrNull(towerIndex) ?: return@launch
             val activity = tower.activities.getOrNull(activityIndex) ?: return@launch
             val categoryStr = Activity.serializeCategories(categories)
+            val resolvedGroup = groupName.ifBlank { activity.groupName }
+            val isFloorBased = resolvedGroup.contains("Common", ignoreCase = true)
+            val groupCol = encodeGroupColumn(resolvedGroup, usePercentage)
+
             withContext(Dispatchers.IO) {
-                excelManager.renameActivity(tower.sheetName, activity.rowIndex, newName, contractor, categoryStr, groupName)
-                
-                val resolvedGroup = groupName.ifBlank { activity.groupName }
-                val isFloorBased = resolvedGroup.contains("Common", ignoreCase = true)
+                excelManager.renameActivity(tower.sheetName, activity.rowIndex, newName, contractor, categoryStr, groupCol)
 
                 val newActivity = activity.copy(
                     name = newName,
@@ -391,8 +409,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 
                 _towers.value = towersList.toList()
                 
-                // Push changes
-                enqueueUpdate(tower.sheetName, activity.rowIndex, 1, resolvedGroup) // col A
+                // Push changes (col A includes % flag)
+                enqueueUpdate(tower.sheetName, activity.rowIndex, 1, groupCol) // col A = group|%
                 enqueueUpdate(tower.sheetName, activity.rowIndex, 2, newName) // col B
                 enqueueUpdate(tower.sheetName, activity.rowIndex, 3, contractor) // col C
                 enqueueUpdate(tower.sheetName, activity.rowIndex, 4, categoryStr) // col D
