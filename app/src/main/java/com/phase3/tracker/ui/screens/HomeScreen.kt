@@ -47,8 +47,9 @@ fun HomeScreen(
     onToggleEditMode: () -> Unit,
     onSetEditMode: (Boolean) -> Unit,
     onActivityClick: (towerIndex: Int, activityIndex: Int) -> Unit,
-    onAddActivity: (towerIndex: Int, name: String, contractor: String, categories: List<String>, groupName: String, usePercentage: Boolean) -> Unit,
-    onRenameActivity: (towerIndex: Int, activityIndex: Int, newName: String, contractor: String, categories: List<String>, groupName: String, usePercentage: Boolean) -> Unit,
+    onAddActivity: (towerIndex: Int, name: String, contractor: String, categories: List<String>, groupName: String, usePercentage: Boolean, weightage: Int) -> Unit,
+    onRenameActivity: (towerIndex: Int, activityIndex: Int, newName: String, contractor: String, categories: List<String>, groupName: String, usePercentage: Boolean, weightage: Int) -> Unit,
+    onDeleteActivity: (towerIndex: Int, activityIndex: Int) -> Unit,
     getFilteredActivities: (Tower) -> List<Activity>
 ) {
     var selectedTowerIndex by remember { mutableIntStateOf(0) }
@@ -56,6 +57,7 @@ fun HomeScreen(
     var showCategoryFilterMenu by remember { mutableStateOf(false) }
     var showContractorFilterMenu by remember { mutableStateOf(false) }
     var showSettingsSheet by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
 
     // Add Activity dialog state
     var showAddDialog by remember { mutableStateOf(false) }
@@ -64,6 +66,7 @@ fun HomeScreen(
     var addCategories by remember { mutableStateOf<List<String>>(emptyList()) }
     var addGroupName by remember { mutableStateOf("") }
     var addUsePercentage by remember { mutableStateOf(false) }
+    var addWeightage by remember { mutableIntStateOf(5) }
 
     // Rename Activity dialog state
     var showRenameDialog by remember { mutableStateOf<Triple<Int, String, Activity?>?>(null) }
@@ -72,6 +75,40 @@ fun HomeScreen(
     var renameCategories by remember { mutableStateOf<List<String>>(emptyList()) }
     var renameGroupName by remember { mutableStateOf("") }
     var renameUsePercentage by remember { mutableStateOf(false) }
+    var renameWeightage by remember { mutableIntStateOf(5) }
+
+    // Delete confirmation
+    var pendingDeleteActivityIndex by remember { mutableStateOf<Int?>(null) }
+
+    // Delete confirmation dialog
+    pendingDeleteActivityIndex?.let { actIdx ->
+        val actName = towers.getOrNull(selectedTowerIndex)?.activities?.getOrNull(actIdx)?.name ?: ""
+        AlertDialog(
+            onDismissRequest = { pendingDeleteActivityIndex = null },
+            title = { Text("Delete Activity") },
+            text = {
+                Text(
+                    "Delete \"$actName\" from both towers?\nThis cannot be undone.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onDeleteActivity(selectedTowerIndex, actIdx)
+                        pendingDeleteActivityIndex = null
+                    },
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    )
+                ) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeleteActivityIndex = null }) { Text("Cancel") }
+            },
+            shape = RoundedCornerShape(28.dp)
+        )
+    }
 
     // Settings bottom sheet
     if (showSettingsSheet) {
@@ -140,6 +177,8 @@ fun HomeScreen(
             allGroupNames = allGroupNames,
             usePercentage = addUsePercentage,
             onUsePercentageChange = { addUsePercentage = it },
+            weightage = addWeightage,
+            onWeightageChange = { addWeightage = it },
             confirmLabel = "Add",
             onConfirm = {
                 if (addActivityName.isNotBlank()) {
@@ -149,23 +188,18 @@ fun HomeScreen(
                         addContractor.trim(),
                         addCategories,
                         addGroupName.trim(),
-                        addUsePercentage
+                        addUsePercentage,
+                        addWeightage
                     )
-                    addActivityName = ""
-                    addContractor = ""
-                    addCategories = emptyList()
-                    addGroupName = ""
-                    addUsePercentage = false
+                    addActivityName = ""; addContractor = ""; addCategories = emptyList()
+                    addGroupName = ""; addUsePercentage = false; addWeightage = 5
                     showAddDialog = false
                 }
             },
             onDismiss = {
                 showAddDialog = false
-                addActivityName = ""
-                addContractor = ""
-                addCategories = emptyList()
-                addGroupName = ""
-                addUsePercentage = false
+                addActivityName = ""; addContractor = ""; addCategories = emptyList()
+                addGroupName = ""; addUsePercentage = false; addWeightage = 5
             }
         )
     }
@@ -178,6 +212,7 @@ fun HomeScreen(
             renameCategories = activity?.categories ?: emptyList()
             renameGroupName = activity?.groupName ?: ""
             renameUsePercentage = activity?.usePercentage ?: false
+            renameWeightage = activity?.weightage ?: 5
         }
         ActivityFormDialog(
             title = "Edit Activity",
@@ -192,6 +227,8 @@ fun HomeScreen(
             allGroupNames = allGroupNames,
             usePercentage = renameUsePercentage,
             onUsePercentageChange = { renameUsePercentage = it },
+            weightage = renameWeightage,
+            onWeightageChange = { renameWeightage = it },
             confirmLabel = "Save",
             onConfirm = {
                 if (renameText.isNotBlank()) {
@@ -202,7 +239,8 @@ fun HomeScreen(
                         renameContractor.trim(),
                         renameCategories,
                         renameGroupName.trim(),
-                        renameUsePercentage
+                        renameUsePercentage,
+                        renameWeightage
                     )
                     showRenameDialog = null
                 }
@@ -345,10 +383,7 @@ fun HomeScreen(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
-                                        RadioButton(
-                                            selected = selectedContractor == "All",
-                                            onClick = null
-                                        )
+                                        RadioButton(selected = selectedContractor == "All", onClick = null)
                                         Text("All", fontWeight = FontWeight.Medium)
                                     }
                                 },
@@ -365,10 +400,7 @@ fun HomeScreen(
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
-                                            RadioButton(
-                                                selected = selectedContractor == contractor,
-                                                onClick = null
-                                            )
+                                            RadioButton(selected = selectedContractor == contractor, onClick = null)
                                             Text(contractor)
                                         }
                                     },
@@ -414,10 +446,7 @@ fun HomeScreen(
                             color = MaterialTheme.colorScheme.onSecondaryContainer
                         )
                     } else {
-                        Icon(
-                            Icons.Default.CloudDownload,
-                            contentDescription = "Sync from Google Sheets"
-                        )
+                        Icon(Icons.Default.CloudDownload, contentDescription = "Sync from Google Sheets")
                     }
                 }
 
@@ -454,7 +483,7 @@ fun HomeScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 16.dp),
+                    .padding(bottom = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 towers.forEachIndexed { index, tower ->
@@ -462,10 +491,7 @@ fun HomeScreen(
                         selected = selectedTowerIndex == index,
                         onClick = { selectedTowerIndex = index },
                         label = {
-                            Text(
-                                tower.name,
-                                style = MaterialTheme.typography.labelLarge
-                            )
+                            Text(tower.name, style = MaterialTheme.typography.labelLarge)
                         },
                         colors = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
@@ -481,6 +507,47 @@ fun HomeScreen(
                 }
             }
 
+            // ── Search bar ─────────────────────────────────────
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                placeholder = {
+                    Text(
+                        "Search activities…",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                    )
+                },
+                leadingIcon = {
+                    Icon(
+                        Icons.Default.Search,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                    )
+                },
+                trailingIcon = {
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(onClick = { searchQuery = "" }) {
+                            Icon(
+                                Icons.Default.Clear,
+                                contentDescription = "Clear search",
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                },
+                singleLine = true,
+                shape = RoundedCornerShape(28.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp)
+            )
+
             // ── Dynamic section label ──────────────────────────
             val filterLabel = buildFilterLabel(selectedStatusFilters)
             Text(
@@ -495,13 +562,18 @@ fun HomeScreen(
             val tower = towers.getOrNull(selectedTowerIndex)
             val filteredActivities = tower?.let { getFilteredActivities(it) } ?: emptyList()
 
-            if (filteredActivities.isEmpty()) {
+            // Apply search on top of status/category/contractor filters
+            val displayedActivities = if (searchQuery.isBlank()) filteredActivities
+            else filteredActivities.filter { it.name.contains(searchQuery, ignoreCase = true) }
+
+            if (displayedActivities.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        "No matching activities",
+                        if (searchQuery.isNotBlank()) "No activities matching \"$searchQuery\""
+                        else "No matching activities",
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -511,18 +583,56 @@ fun HomeScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = PaddingValues(bottom = 96.dp)
                 ) {
-                    items(filteredActivities) { activity ->
+                    items(displayedActivities, key = { it.rowIndex }) { activity ->
                         val activityIndex = tower!!.activities.indexOf(activity)
-                        ActivityProgressCard(
-                            activity = activity,
-                            editMode = editMode,
-                            onClick = { onActivityClick(selectedTowerIndex, activityIndex) },
-                            onLongClick = {
-                                if (editMode) {
-                                    showRenameDialog = Triple(activityIndex, activity.name, activity)
+
+                        if (editMode) {
+                            val dismissState = rememberSwipeToDismissBoxState(
+                                confirmValueChange = { value ->
+                                    if (value == SwipeToDismissBoxValue.EndToStart) {
+                                        pendingDeleteActivityIndex = activityIndex
+                                    }
+                                    false // always snap back; dialog handles the actual delete
                                 }
+                            )
+                            SwipeToDismissBox(
+                                state = dismissState,
+                                enableDismissFromStartToEnd = false,
+                                backgroundContent = {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(MaterialTheme.colorScheme.errorContainer)
+                                            .padding(end = 20.dp),
+                                        contentAlignment = Alignment.CenterEnd
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Delete,
+                                            contentDescription = "Delete",
+                                            tint = MaterialTheme.colorScheme.onErrorContainer,
+                                            modifier = Modifier.size(22.dp)
+                                        )
+                                    }
+                                }
+                            ) {
+                                ActivityProgressCard(
+                                    activity = activity,
+                                    editMode = editMode,
+                                    onClick = { onActivityClick(selectedTowerIndex, activityIndex) },
+                                    onLongClick = {
+                                        showRenameDialog = Triple(activityIndex, activity.name, activity)
+                                    }
+                                )
                             }
-                        )
+                        } else {
+                            ActivityProgressCard(
+                                activity = activity,
+                                editMode = editMode,
+                                onClick = { onActivityClick(selectedTowerIndex, activityIndex) },
+                                onLongClick = {}
+                            )
+                        }
                     }
                 }
             }
@@ -625,6 +735,16 @@ private fun ActivityProgressCard(
                             "%",
                             style = MaterialTheme.typography.labelSmall.copy(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                fontSize = 9.sp
+                            )
+                        )
+                    }
+                    // Weightage badge (only show non-default values)
+                    if (activity.weightage != 5) {
+                        Text(
+                            "W${activity.weightage}",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
                                 fontSize = 9.sp
                             )
                         )

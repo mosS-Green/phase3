@@ -18,8 +18,6 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CameraAlt
@@ -32,8 +30,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -67,16 +63,13 @@ fun ActivityScreen(
     val view = LocalView.current
     val scope = rememberCoroutineScope()
 
-    // Percentage input dialog state
+    // Percentage grid dialog state
     var showPercentageDialog by remember { mutableStateOf<Int?>(null) }
-    var percentageInput by remember { mutableStateOf("") }
 
-    // Percentage input dialog
+    // 3×4 tap-grid percentage dialog (0, 10, 20 … 100)
     showPercentageDialog?.let { flatNumber ->
         val currentPct = activity.percentages[flatNumber] ?: 0
-        LaunchedEffect(flatNumber) {
-            percentageInput = if (currentPct > 0) currentPct.toString() else ""
-        }
+        val gridValues = (0..10).map { it * 10 }  // [0, 10, 20 … 100]
         AlertDialog(
             onDismissRequest = { showPercentageDialog = null },
             title = {
@@ -88,54 +81,69 @@ fun ActivityScreen(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        "Enter completion percentage (0-100)",
+                        "Currently: $currentPct%  — tap to update",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    OutlinedTextField(
-                        value = percentageInput,
-                        onValueChange = { v ->
-                            // Only allow digits 0-100
-                            val filtered = v.filter { it.isDigit() }
-                            val num = filtered.toIntOrNull()
-                            if (num == null || num <= 100) {
-                                percentageInput = filtered
+                    Spacer(modifier = Modifier.height(4.dp))
+                    // Rows of 3
+                    gridValues.chunked(3).forEach { rowVals ->
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            rowVals.forEach { value ->
+                                val bgColor = percentageColor(value, completeColor, wipColor, emptyColor)
+                                val textColor = when {
+                                    value >= 85 -> Color(0xFF1B3417)
+                                    value >= 51 -> Color(0xFF2B3D1F)
+                                    value >= 26 -> Color(0xFF3D3520)
+                                    value >= 1  -> Color(0xFF3E2A18)
+                                    else        -> Color(0xFF3E1F18)
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(44.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(
+                                            if (value == currentPct)
+                                                bgColor.copy(alpha = 1f)
+                                            else
+                                                bgColor.copy(alpha = 0.65f)
+                                        )
+                                        .then(
+                                            if (value == currentPct)
+                                                Modifier  // selected: slightly brighter (full alpha)
+                                            else Modifier
+                                        )
+                                        .clickable {
+                                            onUpdatePercentage(flatNumber, value)
+                                            showPercentageDialog = null
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        "$value%",
+                                        style = MaterialTheme.typography.labelMedium.copy(
+                                            fontWeight = if (value == currentPct) FontWeight.ExtraBold else FontWeight.Medium,
+                                            color = textColor
+                                        ),
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
                             }
-                        },
-                        label = { Text("%") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Number,
-                            imeAction = ImeAction.Done
-                        ),
-                        keyboardActions = KeyboardActions(
-                            onDone = {
-                                val pct = percentageInput.toIntOrNull() ?: 0
-                                onUpdatePercentage(flatNumber, pct.coerceIn(0, 100))
-                                showPercentageDialog = null
+                            // pad last row to 3 cells
+                            repeat(3 - rowVals.size) {
+                                Spacer(modifier = Modifier.weight(1f))
                             }
-                        ),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            cursorColor = MaterialTheme.colorScheme.primary
-                        ),
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                        }
+                    }
                 }
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    val pct = percentageInput.toIntOrNull() ?: 0
-                    onUpdatePercentage(flatNumber, pct.coerceIn(0, 100))
-                    showPercentageDialog = null
-                }) {
-                    Text("Save")
-                }
-            },
+            confirmButton = {},
             dismissButton = {
-                TextButton(onClick = { showPercentageDialog = null }) {
-                    Text("Cancel")
-                }
+                TextButton(onClick = { showPercentageDialog = null }) { Text("Cancel") }
             },
             shape = RoundedCornerShape(28.dp)
         )

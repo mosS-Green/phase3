@@ -18,7 +18,8 @@ class ExcelManager {
         private const val GROUP_COL = 0       // Column A — group/classification
         private const val CONTRACTOR_COL = 2  // Column C (0-indexed)
         private const val CATEGORY_COL = 3    // Column D (0-indexed)
-        private const val FLAT_START_COL = 4  // Column E (0-indexed) — shifted by 2 for new Contractor+Category cols
+        private const val WEIGHTAGE_COL = 4   // Column E (0-indexed) — activity weightage 1-10
+        private const val FLAT_START_COL = 5  // Column F (0-indexed) — shifted by 1 for new Weightage col
         private const val FLATS_PER_FLOOR = 4
         private const val FIRST_FLOOR = 2
         private const val LAST_FLOOR = 34
@@ -114,6 +115,9 @@ class ExcelManager {
                 val categoryRaw = getCellString(row, CATEGORY_COL) ?: ""
                 val categories = Activity.parseCategories(categoryRaw)
 
+                // Read weightage (column E) — default 5 if missing or out-of-range
+                val weightage = getCellNumeric(row, WEIGHTAGE_COL)?.toInt()?.coerceIn(1, 10) ?: 5
+
                 // Determine if this activity uses percentage tracking
                 // Method 1: Column A flag "|%" takes priority
                 // Method 2: If any flat cell has a numeric value, infer percentage mode
@@ -160,6 +164,7 @@ class ExcelManager {
                         categories = categories,
                         usePercentage = hasPercentage,
                         isFloorBased = isFloorBased,
+                        weightage = weightage,
                         statuses = statuses,
                         percentages = percentages
                     )
@@ -196,7 +201,14 @@ class ExcelManager {
         cell.setCellValue(percentage.toDouble())
     }
 
-    fun addActivity(sheetName: String, activityName: String, contractor: String, categoryStr: String, groupName: String = ""): Int {
+    fun addActivity(
+        sheetName: String,
+        activityName: String,
+        contractor: String,
+        categoryStr: String,
+        groupName: String = "",
+        weightage: Int = 5
+    ): Int {
         val wb = workbook ?: return -1
         val sheet = wb.getSheet(sheetName) ?: return -1
 
@@ -213,11 +225,21 @@ class ExcelManager {
         row.createCell(CONTRACTOR_COL).setCellValue(contractor)
         // Column D - category
         row.createCell(CATEGORY_COL).setCellValue(categoryStr)
+        // Column E - weightage
+        row.createCell(WEIGHTAGE_COL).setCellValue(weightage.toDouble())
 
         return newRowIdx + 1 // Return 1-based row number
     }
 
-    fun renameActivity(sheetName: String, activityRow: Int, newName: String, contractor: String, categoryStr: String, groupName: String = "") {
+    fun renameActivity(
+        sheetName: String,
+        activityRow: Int,
+        newName: String,
+        contractor: String,
+        categoryStr: String,
+        groupName: String = "",
+        weightage: Int = 5
+    ) {
         val wb = workbook ?: return
         val sheet = wb.getSheet(sheetName) ?: return
         val row = sheet.getRow(activityRow - 1) ?: return
@@ -230,6 +252,24 @@ class ExcelManager {
         (row.getCell(CONTRACTOR_COL) ?: row.createCell(CONTRACTOR_COL)).setCellValue(contractor)
         // Column D - category
         (row.getCell(CATEGORY_COL) ?: row.createCell(CATEGORY_COL)).setCellValue(categoryStr)
+        // Column E - weightage
+        (row.getCell(WEIGHTAGE_COL) ?: row.createCell(WEIGHTAGE_COL)).setCellValue(weightage.toDouble())
+    }
+
+    /**
+     * Blanks all cells in the given activity row. On next load the row will be skipped
+     * because its name cell (col B) will be empty. Row indices of other activities are unaffected.
+     */
+    fun deleteActivity(sheetName: String, activityRow: Int) {
+        val wb = workbook ?: return
+        val sheet = wb.getSheet(sheetName) ?: return
+        val row = sheet.getRow(activityRow - 1) ?: return
+        // Clear metadata columns A-E
+        for (colIdx in 0..WEIGHTAGE_COL) {
+            (row.getCell(colIdx) ?: row.createCell(colIdx)).setCellValue("")
+        }
+        // Explicitly blank name cell to guarantee skip on reload
+        (row.getCell(1) ?: row.createCell(1)).setCellValue("")
     }
 
     fun saveWorkbook(outputStream: OutputStream) {

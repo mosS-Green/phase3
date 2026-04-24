@@ -8,7 +8,9 @@ data class Tower(
     val overallCompletion: Float
         get() {
             if (activities.isEmpty()) return 0f
-            return activities.map { it.completionPercent }.average().toFloat()
+            val totalWeight = activities.sumOf { it.weightage }
+            if (totalWeight == 0) return 0f
+            return (activities.sumOf { it.completionPercent.toDouble() * it.weightage } / totalWeight).toFloat()
         }
 
     val ongoingActivities: List<Activity>

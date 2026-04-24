@@ -9,6 +9,7 @@ data class Activity(
     val categories: List<String> = emptyList(),
     val usePercentage: Boolean = false,   // Track by percentage instead of C/W/E
     val isFloorBased: Boolean = false,    // Common area: 1 cell per floor
+    val weightage: Int = 5,               // 1–10; default 5 (used for weighted tower completion)
     val statuses: MutableMap<Int, FlatStatus>,  // flatNumber -> status
     val percentages: MutableMap<Int, Int> = mutableMapOf()  // flatNumber -> 0-100
 ) {

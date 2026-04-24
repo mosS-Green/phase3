@@ -309,7 +309,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         contractor: String = "",
         categories: List<String> = emptyList(),
         groupName: String = "",
-        usePercentage: Boolean = false
+        usePercentage: Boolean = false,
+        weightage: Int = 5
     ) {
         viewModelScope.launch {
             val towersList = _towers.value.toMutableList()
@@ -317,7 +318,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val categoryStr = Activity.serializeCategories(categories)
             val groupCol = encodeGroupColumn(groupName, usePercentage)
             withContext(Dispatchers.IO) {
-                val newRow = excelManager.addActivity(tower.sheetName, activityName, contractor, categoryStr, groupCol)
+                val newRow = excelManager.addActivity(tower.sheetName, activityName, contractor, categoryStr, groupCol, weightage)
                 if (newRow > 0) {
                     val resolvedGroup = groupName.ifBlank { Tower.groupForRow(newRow)?.name ?: "Other" }
                     val isFloorBased = resolvedGroup.contains("Common", ignoreCase = true)
@@ -337,21 +338,60 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         categories = categories,
                         usePercentage = usePercentage,
                         isFloorBased = isFloorBased,
+                        weightage = weightage,
                         statuses = statuses,
                         percentages = percentages
                     )
                     
                     val newActivities = tower.activities.toMutableList().apply { add(newActivity) }
-                    val newTower = tower.copy(activities = newActivities)
-                    towersList[towerIndex] = newTower
+                    towersList[towerIndex] = tower.copy(activities = newActivities)
+
+                    // Push metadata to Google Sheets (col A includes % flag)
+                    enqueueUpdate(tower.sheetName, newRow, 1, groupCol)          // col A
+                    enqueueUpdate(tower.sheetName, newRow, 2, activityName)       // col B
+                    enqueueUpdate(tower.sheetName, newRow, 3, contractor)         // col C
+                    enqueueUpdate(tower.sheetName, newRow, 4, categoryStr)        // col D
+                    enqueueUpdate(tower.sheetName, newRow, 5, weightage.toString()) // col E
+
+                    // ── Mirror to the other tower ───────────────────────────
+                    val otherTowerIndex = if (towerIndex == 0) 1 else 0
+                    val otherTower = towersList.getOrNull(otherTowerIndex)
+                    if (otherTower != null) {
+                        val mirrorRow = excelManager.addActivity(
+                            otherTower.sheetName, activityName, contractor, categoryStr, groupCol, weightage
+                        )
+                        if (mirrorRow > 0) {
+                            val mirrorStatuses = mutableMapOf<Int, FlatStatus>()
+                            val mirrorPercentages = mutableMapOf<Int, Int>()
+                            ExcelManager.FLAT_NUMBERS.forEach {
+                                mirrorStatuses[it] = FlatStatus.EMPTY
+                                if (usePercentage) mirrorPercentages[it] = 0
+                            }
+                            val mirrorActivity = Activity(
+                                name = activityName,
+                                rowIndex = mirrorRow,
+                                groupName = resolvedGroup,
+                                groupIndex = Activity.groupIndexFor(resolvedGroup),
+                                contractor = contractor,
+                                categories = categories,
+                                usePercentage = usePercentage,
+                                isFloorBased = isFloorBased,
+                                weightage = weightage,
+                                statuses = mirrorStatuses,
+                                percentages = mirrorPercentages
+                            )
+                            val newOtherActivities = otherTower.activities.toMutableList().apply { add(mirrorActivity) }
+                            towersList[otherTowerIndex] = otherTower.copy(activities = newOtherActivities)
+
+                            enqueueUpdate(otherTower.sheetName, mirrorRow, 1, groupCol)
+                            enqueueUpdate(otherTower.sheetName, mirrorRow, 2, activityName)
+                            enqueueUpdate(otherTower.sheetName, mirrorRow, 3, contractor)
+                            enqueueUpdate(otherTower.sheetName, mirrorRow, 4, categoryStr)
+                            enqueueUpdate(otherTower.sheetName, mirrorRow, 5, weightage.toString())
+                        }
+                    }
 
                     _towers.value = towersList.toList()
-                    
-                    // Push metadata to Google Sheets (col A includes % flag)
-                    enqueueUpdate(tower.sheetName, newRow, 1, groupCol) // col A = group|%
-                    enqueueUpdate(tower.sheetName, newRow, 2, activityName) // col B
-                    enqueueUpdate(tower.sheetName, newRow, 3, contractor) // col C
-                    enqueueUpdate(tower.sheetName, newRow, 4, categoryStr) // col D
                 }
             }
             _statusMessage.value = "Activity added: $activityName"
@@ -365,19 +405,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         contractor: String = "",
         categories: List<String> = emptyList(),
         groupName: String = "",
-        usePercentage: Boolean = false
+        usePercentage: Boolean = false,
+        weightage: Int = 5
     ) {
         viewModelScope.launch {
             val towersList = _towers.value.toMutableList()
             val tower = towersList.getOrNull(towerIndex) ?: return@launch
             val activity = tower.activities.getOrNull(activityIndex) ?: return@launch
+            val oldName = activity.name  // capture before overwrite for mirror lookup
             val categoryStr = Activity.serializeCategories(categories)
             val resolvedGroup = groupName.ifBlank { activity.groupName }
             val isFloorBased = resolvedGroup.contains("Common", ignoreCase = true)
             val groupCol = encodeGroupColumn(resolvedGroup, usePercentage)
 
             withContext(Dispatchers.IO) {
-                excelManager.renameActivity(tower.sheetName, activity.rowIndex, newName, contractor, categoryStr, groupCol)
+                excelManager.renameActivity(tower.sheetName, activity.rowIndex, newName, contractor, categoryStr, groupCol, weightage)
 
                 val newActivity = activity.copy(
                     name = newName,
@@ -386,22 +428,95 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     groupName = resolvedGroup,
                     groupIndex = Activity.groupIndexFor(resolvedGroup),
                     usePercentage = usePercentage,
-                    isFloorBased = isFloorBased
+                    isFloorBased = isFloorBased,
+                    weightage = weightage
                 )
                 val newActivities = tower.activities.toMutableList()
                 newActivities[activityIndex] = newActivity
-                val newTower = tower.copy(activities = newActivities)
-                towersList[towerIndex] = newTower
+                towersList[towerIndex] = tower.copy(activities = newActivities)
                 
+                // Push changes
+                enqueueUpdate(tower.sheetName, activity.rowIndex, 1, groupCol)
+                enqueueUpdate(tower.sheetName, activity.rowIndex, 2, newName)
+                enqueueUpdate(tower.sheetName, activity.rowIndex, 3, contractor)
+                enqueueUpdate(tower.sheetName, activity.rowIndex, 4, categoryStr)
+                enqueueUpdate(tower.sheetName, activity.rowIndex, 5, weightage.toString())
+
+                // ── Mirror rename to the other tower (match by old name) ──
+                val otherTowerIndex = if (towerIndex == 0) 1 else 0
+                val otherTower = towersList.getOrNull(otherTowerIndex)
+                if (otherTower != null) {
+                    val otherIdx = otherTower.activities.indexOfFirst { it.name == oldName }
+                    if (otherIdx >= 0) {
+                        val otherActivity = otherTower.activities[otherIdx]
+                        excelManager.renameActivity(
+                            otherTower.sheetName, otherActivity.rowIndex,
+                            newName, contractor, categoryStr, groupCol, weightage
+                        )
+                        val updatedOther = otherActivity.copy(
+                            name = newName,
+                            contractor = contractor,
+                            categories = categories,
+                            groupName = resolvedGroup,
+                            groupIndex = Activity.groupIndexFor(resolvedGroup),
+                            usePercentage = usePercentage,
+                            isFloorBased = isFloorBased,
+                            weightage = weightage
+                        )
+                        val newOtherActivities = otherTower.activities.toMutableList()
+                        newOtherActivities[otherIdx] = updatedOther
+                        towersList[otherTowerIndex] = otherTower.copy(activities = newOtherActivities)
+
+                        enqueueUpdate(otherTower.sheetName, otherActivity.rowIndex, 1, groupCol)
+                        enqueueUpdate(otherTower.sheetName, otherActivity.rowIndex, 2, newName)
+                        enqueueUpdate(otherTower.sheetName, otherActivity.rowIndex, 3, contractor)
+                        enqueueUpdate(otherTower.sheetName, otherActivity.rowIndex, 4, categoryStr)
+                        enqueueUpdate(otherTower.sheetName, otherActivity.rowIndex, 5, weightage.toString())
+                    }
+                }
+
                 _towers.value = towersList.toList()
-                
-                // Push changes (col A includes % flag)
-                enqueueUpdate(tower.sheetName, activity.rowIndex, 1, groupCol) // col A = group|%
-                enqueueUpdate(tower.sheetName, activity.rowIndex, 2, newName) // col B
-                enqueueUpdate(tower.sheetName, activity.rowIndex, 3, contractor) // col C
-                enqueueUpdate(tower.sheetName, activity.rowIndex, 4, categoryStr) // col D
             }
             _statusMessage.value = "Updated: $newName"
+        }
+    }
+
+    fun deleteActivity(towerIndex: Int, activityIndex: Int) {
+        viewModelScope.launch {
+            val towersList = _towers.value.toMutableList()
+            val tower = towersList.getOrNull(towerIndex) ?: return@launch
+            val activity = tower.activities.getOrNull(activityIndex) ?: return@launch
+            val activityName = activity.name
+
+            withContext(Dispatchers.IO) {
+                // Blank the row locally and propagate to Sheets
+                excelManager.deleteActivity(tower.sheetName, activity.rowIndex)
+                for (col in 1..5) {
+                    enqueueUpdate(tower.sheetName, activity.rowIndex, col, "")
+                }
+
+                val newActivities = tower.activities.toMutableList().apply { removeAt(activityIndex) }
+                towersList[towerIndex] = tower.copy(activities = newActivities)
+
+                // ── Mirror deletion to the other tower ──────────────────
+                val otherTowerIndex = if (towerIndex == 0) 1 else 0
+                val otherTower = towersList.getOrNull(otherTowerIndex)
+                if (otherTower != null) {
+                    val otherIdx = otherTower.activities.indexOfFirst { it.name == activityName }
+                    if (otherIdx >= 0) {
+                        val otherActivity = otherTower.activities[otherIdx]
+                        excelManager.deleteActivity(otherTower.sheetName, otherActivity.rowIndex)
+                        for (col in 1..5) {
+                            enqueueUpdate(otherTower.sheetName, otherActivity.rowIndex, col, "")
+                        }
+                        val newOtherActivities = otherTower.activities.toMutableList().apply { removeAt(otherIdx) }
+                        towersList[otherTowerIndex] = otherTower.copy(activities = newOtherActivities)
+                    }
+                }
+
+                _towers.value = towersList.toList()
+            }
+            _statusMessage.value = "Deleted: $activityName"
         }
     }
 
@@ -524,7 +639,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return (fromData + defaults).distinct().sorted()
     }
 
-    /** Apply filters to get the filtered list of activities for a tower */
+    /** Apply filters to get the filtered + sorted list of activities for a tower */
     fun getFilteredActivities(tower: Tower): List<Activity> {
         val statusFilters = _selectedStatusFilters.value
         val categoryFilters = _selectedCategories.value
@@ -547,7 +662,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val contractorMatch = contractor == "All" || activity.contractor.equals(contractor, ignoreCase = true)
 
             statusMatch && categoryMatch && contractorMatch
-        }
+        }.sortedBy { it.name.lowercase() }  // alphabetical within filter results
     }
 
     fun clearStatusMessage() {

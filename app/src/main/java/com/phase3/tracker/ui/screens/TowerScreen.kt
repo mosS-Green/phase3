@@ -1,9 +1,6 @@
 package com.phase3.tracker.ui.screens
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -16,8 +13,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -32,7 +32,7 @@ import com.phase3.tracker.model.Activity
 import com.phase3.tracker.model.FlatStatus
 import com.phase3.tracker.ui.theme.*
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun TowerScreen(
     towerName: String,
@@ -40,16 +40,20 @@ fun TowerScreen(
     editMode: Boolean,
     allGroupNames: List<String>,
     onActivityClick: (Int) -> Unit,
-    onAddActivity: (name: String, contractor: String, categories: List<String>, groupName: String, usePercentage: Boolean) -> Unit,
-    onRenameActivity: (index: Int, newName: String, contractor: String, categories: List<String>, groupName: String, usePercentage: Boolean) -> Unit,
+    onAddActivity: (name: String, contractor: String, categories: List<String>, groupName: String, usePercentage: Boolean, weightage: Int) -> Unit,
+    onRenameActivity: (index: Int, newName: String, contractor: String, categories: List<String>, groupName: String, usePercentage: Boolean, weightage: Int) -> Unit,
+    onDeleteActivity: (index: Int) -> Unit,
     onBack: () -> Unit
 ) {
+    var searchQuery by remember { mutableStateOf("") }
+
     var showAddDialog by remember { mutableStateOf(false) }
     var addActivityName by remember { mutableStateOf("") }
     var addContractor by remember { mutableStateOf("") }
     var addCategories by remember { mutableStateOf<List<String>>(emptyList()) }
     var addGroupName by remember { mutableStateOf("") }
     var addUsePercentage by remember { mutableStateOf(false) }
+    var addWeightage by remember { mutableIntStateOf(5) }
 
     var showRenameDialog by remember { mutableStateOf<Triple<Int, String, Activity?>?>(null) }
     var renameText by remember { mutableStateOf("") }
@@ -57,13 +61,53 @@ fun TowerScreen(
     var renameCategories by remember { mutableStateOf<List<String>>(emptyList()) }
     var renameGroupName by remember { mutableStateOf("") }
     var renameUsePercentage by remember { mutableStateOf(false) }
+    var renameWeightage by remember { mutableIntStateOf(5) }
+
+    // Delete confirmation
+    var pendingDeleteIndex by remember { mutableStateOf<Int?>(null) }
 
     // Collapsible group state — all expanded by default
     val expandedGroups = remember { mutableStateMapOf<String, Boolean>() }
 
-    // Group activities by groupName
-    val groupedActivities = remember(activities) {
-        activities.withIndex().groupBy { it.value.groupName }
+    // Group activities by groupName, applying search filter and alphabetical sort within each group
+    val groupedActivities = remember(activities, searchQuery) {
+        activities
+            .withIndex()
+            .filter { (_, act) ->
+                searchQuery.isBlank() || act.name.contains(searchQuery, ignoreCase = true)
+            }
+            .groupBy { it.value.groupName }
+            .mapValues { (_, items) -> items.sortedBy { it.value.name.lowercase() } }
+    }
+
+    // Delete confirmation dialog
+    pendingDeleteIndex?.let { actIdx ->
+        val actName = activities.getOrNull(actIdx)?.name ?: ""
+        AlertDialog(
+            onDismissRequest = { pendingDeleteIndex = null },
+            title = { Text("Delete Activity") },
+            text = {
+                Text(
+                    "Delete \"$actName\" from both towers?\nThis cannot be undone.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onDeleteActivity(actIdx)
+                        pendingDeleteIndex = null
+                    },
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    )
+                ) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeleteIndex = null }) { Text("Cancel") }
+            },
+            shape = RoundedCornerShape(28.dp)
+        )
     }
 
     // Add Activity dialog
@@ -81,25 +125,21 @@ fun TowerScreen(
             allGroupNames = allGroupNames,
             usePercentage = addUsePercentage,
             onUsePercentageChange = { addUsePercentage = it },
+            weightage = addWeightage,
+            onWeightageChange = { addWeightage = it },
             confirmLabel = "Add",
             onConfirm = {
                 if (addActivityName.isNotBlank()) {
-                    onAddActivity(addActivityName.trim(), addContractor.trim(), addCategories, addGroupName.trim(), addUsePercentage)
-                    addActivityName = ""
-                    addContractor = ""
-                    addCategories = emptyList()
-                    addGroupName = ""
-                    addUsePercentage = false
+                    onAddActivity(addActivityName.trim(), addContractor.trim(), addCategories, addGroupName.trim(), addUsePercentage, addWeightage)
+                    addActivityName = ""; addContractor = ""; addCategories = emptyList()
+                    addGroupName = ""; addUsePercentage = false; addWeightage = 5
                     showAddDialog = false
                 }
             },
             onDismiss = {
                 showAddDialog = false
-                addActivityName = ""
-                addContractor = ""
-                addCategories = emptyList()
-                addGroupName = ""
-                addUsePercentage = false
+                addActivityName = ""; addContractor = ""; addCategories = emptyList()
+                addGroupName = ""; addUsePercentage = false; addWeightage = 5
             }
         )
     }
@@ -112,6 +152,7 @@ fun TowerScreen(
             renameCategories = activity?.categories ?: emptyList()
             renameGroupName = activity?.groupName ?: ""
             renameUsePercentage = activity?.usePercentage ?: false
+            renameWeightage = activity?.weightage ?: 5
         }
         ActivityFormDialog(
             title = "Edit Activity",
@@ -126,10 +167,12 @@ fun TowerScreen(
             allGroupNames = allGroupNames,
             usePercentage = renameUsePercentage,
             onUsePercentageChange = { renameUsePercentage = it },
+            weightage = renameWeightage,
+            onWeightageChange = { renameWeightage = it },
             confirmLabel = "Save",
             onConfirm = {
                 if (renameText.isNotBlank()) {
-                    onRenameActivity(index, renameText.trim(), renameContractor.trim(), renameCategories, renameGroupName.trim(), renameUsePercentage)
+                    onRenameActivity(index, renameText.trim(), renameContractor.trim(), renameCategories, renameGroupName.trim(), renameUsePercentage, renameWeightage)
                     showRenameDialog = null
                 }
             },
@@ -141,10 +184,7 @@ fun TowerScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Text(
-                        towerName,
-                        style = MaterialTheme.typography.titleLarge
-                    )
+                    Text(towerName, style = MaterialTheme.typography.titleLarge)
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
@@ -177,6 +217,50 @@ fun TowerScreen(
             verticalArrangement = Arrangement.spacedBy(2.dp),
             contentPadding = PaddingValues(bottom = 88.dp)
         ) {
+            // ── Search bar ──────────────────────────────────────
+            item(key = "search_bar") {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = {
+                        Text(
+                            "Search activities…",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Default.Search,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                        )
+                    },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(
+                                    Icons.Default.Clear,
+                                    contentDescription = "Clear search",
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(28.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp)
+                )
+            }
+
+            // ── Grouped activity list ───────────────────────────
             groupedActivities.forEach { (groupName, indexedActivities) ->
                 val groupIndex = indexedActivities.firstOrNull()?.value?.groupIndex ?: 0
                 val isExpanded = expandedGroups.getOrPut(groupName) { true }
@@ -189,9 +273,7 @@ fun TowerScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(8.dp))
-                            .clickable {
-                                expandedGroups[groupName] = !isExpanded
-                            }
+                            .clickable { expandedGroups[groupName] = !isExpanded }
                             .padding(vertical = 8.dp, horizontal = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
@@ -225,22 +307,79 @@ fun TowerScreen(
                     }
                 }
 
-                // Activities (collapsible)
+                // Activities (collapsible, alphabetically sorted, swipe-to-delete in edit mode)
                 if (isExpanded) {
                     indexedActivities.forEach { (originalIndex, activity) ->
-                        item(key = "activity_${originalIndex}") {
-                            ActivityItem(
-                                activity = activity,
-                                groupColor = groupColor,
-                                onClick = { onActivityClick(originalIndex) },
-                                onLongClick = {
-                                    if (editMode) {
-                                        showRenameDialog = Triple(originalIndex, activity.name, activity)
+                        item(key = "activity_$originalIndex") {
+                            Column {
+                                if (editMode) {
+                                    val dismissState = rememberSwipeToDismissBoxState(
+                                        confirmValueChange = { value ->
+                                            if (value == SwipeToDismissBoxValue.EndToStart) {
+                                                pendingDeleteIndex = originalIndex
+                                            }
+                                            false // always snap back; dialog handles delete
+                                        }
+                                    )
+                                    SwipeToDismissBox(
+                                        state = dismissState,
+                                        enableDismissFromStartToEnd = false,
+                                        backgroundContent = {
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .clip(RoundedCornerShape(12.dp))
+                                                    .background(MaterialTheme.colorScheme.errorContainer)
+                                                    .padding(end = 20.dp),
+                                                contentAlignment = Alignment.CenterEnd
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.Delete,
+                                                    contentDescription = "Delete",
+                                                    tint = MaterialTheme.colorScheme.onErrorContainer,
+                                                    modifier = Modifier.size(22.dp)
+                                                )
+                                            }
+                                        }
+                                    ) {
+                                        ActivityItem(
+                                            activity = activity,
+                                            groupColor = groupColor,
+                                            onClick = { onActivityClick(originalIndex) },
+                                            onLongClick = {
+                                                showRenameDialog = Triple(originalIndex, activity.name, activity)
+                                            }
+                                        )
                                     }
+                                } else {
+                                    ActivityItem(
+                                        activity = activity,
+                                        groupColor = groupColor,
+                                        onClick = { onActivityClick(originalIndex) },
+                                        onLongClick = {}
+                                    )
                                 }
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
+                                Spacer(modifier = Modifier.height(4.dp))
+                            }
                         }
+                    }
+                }
+            }
+
+            // Empty search state
+            if (searchQuery.isNotBlank() && groupedActivities.isEmpty()) {
+                item(key = "empty_search") {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 48.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "No activities matching \"$searchQuery\"",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }
@@ -313,9 +452,19 @@ private fun ActivityItem(
                 }
             }
 
+            // Weightage badge (non-default only)
+            if (activity.weightage != 5) {
+                Text(
+                    "W${activity.weightage}",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
+                        fontSize = 9.sp
+                    )
+                )
+            }
+
             // Status info
             if (activity.usePercentage) {
-                // Show average percentage for percentage-based activities
                 Text(
                     "${activity.completionPercent.toInt()}%",
                     style = MaterialTheme.typography.labelMedium.copy(
@@ -324,18 +473,11 @@ private fun ActivityItem(
                     )
                 )
             } else {
-                // Status dots
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    if (completeCount > 0) {
-                        StatusDot(completeColor, "$completeCount")
-                    }
-                    if (wipCount > 0) {
-                        StatusDot(wipColor, "$wipCount")
-                    }
+                    if (completeCount > 0) StatusDot(completeColor, "$completeCount")
+                    if (wipCount > 0) StatusDot(wipColor, "$wipCount")
                     val emptyCount = total - completeCount - wipCount
-                    if (emptyCount > 0) {
-                        StatusDot(emptyColor.copy(alpha = 0.7f), "$emptyCount")
-                    }
+                    if (emptyCount > 0) StatusDot(emptyColor.copy(alpha = 0.7f), "$emptyCount")
                 }
             }
         }

@@ -76,11 +76,14 @@ fun AppNavigation(viewModel: MainViewModel) {
                     onActivityClick = { towerIndex, activityIndex ->
                         navController.navigate(Screen.Activity.createRoute(towerIndex, activityIndex))
                     },
-                    onAddActivity = { towerIndex, name, contractor, categories, groupName, usePercentage ->
-                        viewModel.addActivity(towerIndex, name, contractor, categories, groupName, usePercentage)
+                    onAddActivity = { towerIndex, name, contractor, categories, groupName, usePercentage, weightage ->
+                        viewModel.addActivity(towerIndex, name, contractor, categories, groupName, usePercentage, weightage)
                     },
-                    onRenameActivity = { towerIndex, actIndex, newName, contractor, categories, groupName, usePercentage ->
-                        viewModel.renameActivity(towerIndex, actIndex, newName, contractor, categories, groupName, usePercentage)
+                    onRenameActivity = { towerIndex, actIndex, newName, contractor, categories, groupName, usePercentage, weightage ->
+                        viewModel.renameActivity(towerIndex, actIndex, newName, contractor, categories, groupName, usePercentage, weightage)
+                    },
+                    onDeleteActivity = { towerIndex, activityIndex ->
+                        viewModel.deleteActivity(towerIndex, activityIndex)
                     },
                     getFilteredActivities = { viewModel.getFilteredActivities(it) }
                 )
@@ -114,11 +117,14 @@ fun AppNavigation(viewModel: MainViewModel) {
                         onActivityClick = { activityIndex ->
                             navController.navigate(Screen.Activity.createRoute(towerIndex, activityIndex))
                         },
-                        onAddActivity = { name, contractor, categories, groupName, usePercentage ->
-                            viewModel.addActivity(towerIndex, name, contractor, categories, groupName, usePercentage)
+                        onAddActivity = { name, contractor, categories, groupName, usePercentage, weightage ->
+                            viewModel.addActivity(towerIndex, name, contractor, categories, groupName, usePercentage, weightage)
                         },
-                        onRenameActivity = { actIndex, newName, contractor, categories, groupName, usePercentage ->
-                            viewModel.renameActivity(towerIndex, actIndex, newName, contractor, categories, groupName, usePercentage)
+                        onRenameActivity = { actIndex, newName, contractor, categories, groupName, usePercentage, weightage ->
+                            viewModel.renameActivity(towerIndex, actIndex, newName, contractor, categories, groupName, usePercentage, weightage)
+                        },
+                        onDeleteActivity = { actIndex ->
+                            viewModel.deleteActivity(towerIndex, actIndex)
                         },
                         onBack = { navController.popBackStack() }
                     )
