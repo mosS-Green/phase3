@@ -63,9 +63,6 @@ fun TowerScreen(
     var renameUsePercentage by remember { mutableStateOf(false) }
     var renameWeightage by remember { mutableIntStateOf(5) }
 
-    // Delete confirmation
-    var pendingDeleteIndex by remember { mutableStateOf<Int?>(null) }
-
     // Collapsible group state — all expanded by default
     val expandedGroups = remember { mutableStateMapOf<String, Boolean>() }
 
@@ -80,35 +77,7 @@ fun TowerScreen(
             .mapValues { (_, items) -> items.sortedBy { it.value.name.lowercase() } }
     }
 
-    // Delete confirmation dialog
-    pendingDeleteIndex?.let { actIdx ->
-        val actName = activities.getOrNull(actIdx)?.name ?: ""
-        AlertDialog(
-            onDismissRequest = { pendingDeleteIndex = null },
-            title = { Text("Delete Activity") },
-            text = {
-                Text(
-                    "Delete \"$actName\" from both towers?\nThis cannot be undone.",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        onDeleteActivity(actIdx)
-                        pendingDeleteIndex = null
-                    },
-                    colors = ButtonDefaults.textButtonColors(
-                        contentColor = MaterialTheme.colorScheme.error
-                    )
-                ) { Text("Delete") }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingDeleteIndex = null }) { Text("Cancel") }
-            },
-            shape = RoundedCornerShape(28.dp)
-        )
-    }
+
 
     // Add Activity dialog
     if (showAddDialog) {
@@ -176,7 +145,11 @@ fun TowerScreen(
                     showRenameDialog = null
                 }
             },
-            onDismiss = { showRenameDialog = null }
+            onDismiss = { showRenameDialog = null },
+            onDelete = {
+                onDeleteActivity(index)
+                showRenameDialog = null
+            }
         )
     }
 
@@ -307,58 +280,21 @@ fun TowerScreen(
                     }
                 }
 
-                // Activities (collapsible, alphabetically sorted, swipe-to-delete in edit mode)
+                // Activities (collapsible, alphabetically sorted)
                 if (isExpanded) {
                     indexedActivities.forEach { (originalIndex, activity) ->
                         item(key = "activity_$originalIndex") {
                             Column {
-                                if (editMode) {
-                                    val dismissState = rememberSwipeToDismissBoxState(
-                                        confirmValueChange = { value ->
-                                            if (value == SwipeToDismissBoxValue.EndToStart) {
-                                                pendingDeleteIndex = originalIndex
-                                            }
-                                            false // always snap back; dialog handles delete
+                                ActivityItem(
+                                    activity = activity,
+                                    groupColor = groupColor,
+                                    onClick = { onActivityClick(originalIndex) },
+                                    onLongClick = {
+                                        if (editMode) {
+                                            showRenameDialog = Triple(originalIndex, activity.name, activity)
                                         }
-                                    )
-                                    SwipeToDismissBox(
-                                        state = dismissState,
-                                        enableDismissFromStartToEnd = false,
-                                        backgroundContent = {
-                                            Box(
-                                                modifier = Modifier
-                                                    .fillMaxSize()
-                                                    .clip(RoundedCornerShape(12.dp))
-                                                    .background(MaterialTheme.colorScheme.errorContainer)
-                                                    .padding(end = 20.dp),
-                                                contentAlignment = Alignment.CenterEnd
-                                            ) {
-                                                Icon(
-                                                    Icons.Default.Delete,
-                                                    contentDescription = "Delete",
-                                                    tint = MaterialTheme.colorScheme.onErrorContainer,
-                                                    modifier = Modifier.size(22.dp)
-                                                )
-                                            }
-                                        }
-                                    ) {
-                                        ActivityItem(
-                                            activity = activity,
-                                            groupColor = groupColor,
-                                            onClick = { onActivityClick(originalIndex) },
-                                            onLongClick = {
-                                                showRenameDialog = Triple(originalIndex, activity.name, activity)
-                                            }
-                                        )
                                     }
-                                } else {
-                                    ActivityItem(
-                                        activity = activity,
-                                        groupColor = groupColor,
-                                        onClick = { onActivityClick(originalIndex) },
-                                        onLongClick = {}
-                                    )
-                                }
+                                )
                                 Spacer(modifier = Modifier.height(4.dp))
                             }
                         }

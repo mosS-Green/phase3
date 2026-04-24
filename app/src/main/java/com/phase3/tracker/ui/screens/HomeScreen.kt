@@ -77,38 +77,7 @@ fun HomeScreen(
     var renameUsePercentage by remember { mutableStateOf(false) }
     var renameWeightage by remember { mutableIntStateOf(5) }
 
-    // Delete confirmation
-    var pendingDeleteActivityIndex by remember { mutableStateOf<Int?>(null) }
 
-    // Delete confirmation dialog
-    pendingDeleteActivityIndex?.let { actIdx ->
-        val actName = towers.getOrNull(selectedTowerIndex)?.activities?.getOrNull(actIdx)?.name ?: ""
-        AlertDialog(
-            onDismissRequest = { pendingDeleteActivityIndex = null },
-            title = { Text("Delete Activity") },
-            text = {
-                Text(
-                    "Delete \"$actName\" from both towers?\nThis cannot be undone.",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        onDeleteActivity(selectedTowerIndex, actIdx)
-                        pendingDeleteActivityIndex = null
-                    },
-                    colors = ButtonDefaults.textButtonColors(
-                        contentColor = MaterialTheme.colorScheme.error
-                    )
-                ) { Text("Delete") }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingDeleteActivityIndex = null }) { Text("Cancel") }
-            },
-            shape = RoundedCornerShape(28.dp)
-        )
-    }
 
     // Settings bottom sheet
     if (showSettingsSheet) {
@@ -245,7 +214,11 @@ fun HomeScreen(
                     showRenameDialog = null
                 }
             },
-            onDismiss = { showRenameDialog = null }
+            onDismiss = { showRenameDialog = null },
+            onDelete = {
+                onDeleteActivity(selectedTowerIndex, activityIndex)
+                showRenameDialog = null
+            }
         )
     }
 
@@ -586,53 +559,16 @@ fun HomeScreen(
                     items(displayedActivities, key = { it.rowIndex }) { activity ->
                         val activityIndex = tower!!.activities.indexOf(activity)
 
-                        if (editMode) {
-                            val dismissState = rememberSwipeToDismissBoxState(
-                                confirmValueChange = { value ->
-                                    if (value == SwipeToDismissBoxValue.EndToStart) {
-                                        pendingDeleteActivityIndex = activityIndex
-                                    }
-                                    false // always snap back; dialog handles the actual delete
+                        ActivityProgressCard(
+                            activity = activity,
+                            editMode = editMode,
+                            onClick = { onActivityClick(selectedTowerIndex, activityIndex) },
+                            onLongClick = {
+                                if (editMode) {
+                                    showRenameDialog = Triple(activityIndex, activity.name, activity)
                                 }
-                            )
-                            SwipeToDismissBox(
-                                state = dismissState,
-                                enableDismissFromStartToEnd = false,
-                                backgroundContent = {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .clip(RoundedCornerShape(12.dp))
-                                            .background(MaterialTheme.colorScheme.errorContainer)
-                                            .padding(end = 20.dp),
-                                        contentAlignment = Alignment.CenterEnd
-                                    ) {
-                                        Icon(
-                                            Icons.Default.Delete,
-                                            contentDescription = "Delete",
-                                            tint = MaterialTheme.colorScheme.onErrorContainer,
-                                            modifier = Modifier.size(22.dp)
-                                        )
-                                    }
-                                }
-                            ) {
-                                ActivityProgressCard(
-                                    activity = activity,
-                                    editMode = editMode,
-                                    onClick = { onActivityClick(selectedTowerIndex, activityIndex) },
-                                    onLongClick = {
-                                        showRenameDialog = Triple(activityIndex, activity.name, activity)
-                                    }
-                                )
                             }
-                        } else {
-                            ActivityProgressCard(
-                                activity = activity,
-                                editMode = editMode,
-                                onClick = { onActivityClick(selectedTowerIndex, activityIndex) },
-                                onLongClick = {}
-                            )
-                        }
+                        )
                     }
                 }
             }
