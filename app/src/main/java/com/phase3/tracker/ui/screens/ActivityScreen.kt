@@ -66,10 +66,10 @@ fun ActivityScreen(
     // Percentage grid dialog state
     var showPercentageDialog by remember { mutableStateOf<Int?>(null) }
 
-    // 3×4 tap-grid percentage dialog (0, 10, 20 … 100)
+    // Tap-grid percentage dialog
     showPercentageDialog?.let { flatNumber ->
         val currentPct = activity.percentages[flatNumber] ?: 0
-        val gridValues = (0..10).map { it * 10 }  // [0, 10, 20 … 100]
+        val gridValues = listOf(0, 15, 30, 45, 60, 75, 90, 100)
         AlertDialog(
             onDismissRequest = { showPercentageDialog = null },
             title = {
@@ -86,8 +86,8 @@ fun ActivityScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(modifier = Modifier.height(4.dp))
-                    // Rows of 3
-                    gridValues.chunked(3).forEach { rowVals ->
+                    // Rows of 4
+                    gridValues.chunked(4).forEach { rowVals ->
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                             modifier = Modifier.fillMaxWidth()
@@ -133,8 +133,8 @@ fun ActivityScreen(
                                     )
                                 }
                             }
-                            // pad last row to 3 cells
-                            repeat(3 - rowVals.size) {
+                            // pad last row to 4 cells
+                            repeat(4 - rowVals.size) {
                                 Spacer(modifier = Modifier.weight(1f))
                             }
                         }

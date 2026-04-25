@@ -135,9 +135,12 @@ class ExcelManager {
                         else -> null
                     }
 
-                    // Check if numeric (percentage)
+                    // Check if numeric (percentage) — accept both NUMERIC cells
+                    // and STRING cells whose content parses as a number (Google Sheets
+                    // sometimes writes numbers as text via Apps Script).
                     val pct = FlatStatus.parsePercentage(value)
-                    if (pct != null && cell?.cellType == CellType.NUMERIC) {
+                    if (pct != null && (cell?.cellType == CellType.NUMERIC ||
+                            (cell?.cellType == CellType.STRING && value.toString().trim().toDoubleOrNull() != null))) {
                         hasPercentage = true
                         percentages[flatNum] = pct
                     }
