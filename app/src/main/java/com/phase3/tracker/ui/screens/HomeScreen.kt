@@ -556,7 +556,7 @@ fun HomeScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = PaddingValues(bottom = 96.dp)
                 ) {
-                    items(displayedActivities, key = { it.rowIndex }) { activity ->
+                    items(displayedActivities, key = { it.id }) { activity ->
                         val activityIndex = tower!!.activities.indexOf(activity)
 
                         ActivityProgressCard(

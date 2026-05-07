@@ -10,3 +10,5 @@
 local.properties
 gradle/wrapper/gradle-wrapper.jar
 *.xlsx
+temp1/
+*.jks

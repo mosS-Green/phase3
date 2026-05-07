@@ -12,15 +12,18 @@ android {
         applicationId = "com.phase3.tracker"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "2.0.0"
         buildConfigField("String", "BOT_TOKEN", "\"${System.getenv("BOT_TOKEN") ?: ""}\"")
         buildConfigField("String", "CHAT_ID", "\"${System.getenv("CHAT_ID") ?: ""}\"")
+        buildConfigField("String", "SUPABASE_URL", "\"${System.getenv("SUPABASE_URL") ?: ""}\"")
+        buildConfigField("String", "SUPABASE_ANON_KEY", "\"${System.getenv("SUPABASE_ANON_KEY") ?: ""}\"")
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = null  // Signed externally by apksigner in CI
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

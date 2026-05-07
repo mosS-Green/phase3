@@ -1,10 +1,12 @@
 package com.phase3.tracker.model
 
 data class Activity(
+    val id: Int = 0,                  // Supabase primary key
+    val towerId: Int = 0,             // FK to towers table
     val name: String,
-    val rowIndex: Int,           // Excel row (3-based)
+    val sortOrder: Int = 0,           // Ordering within tower
     val groupName: String,
-    val groupIndex: Int,         // 0-3 for color coding
+    val groupIndex: Int,              // 0-3 for color coding
     val contractor: String = "",
     val categories: List<String> = emptyList(),
     val usePercentage: Boolean = false,   // Track by percentage instead of C/W/E
@@ -146,5 +148,16 @@ data class Activity(
                 else -> 0
             }
         }
+
+        /** Flat number constants (shared across app) */
+        const val FIRST_FLOOR = 2
+        const val LAST_FLOOR = 34
+        const val FLATS_PER_FLOOR = 4
+
+        val FLAT_NUMBERS: List<Int> = (FIRST_FLOOR..LAST_FLOOR).flatMap { floor ->
+            (1..FLATS_PER_FLOOR).map { flat -> floor * 100 + flat }
+        }
+
+        val FLOOR_NUMBERS: List<Int> = (FIRST_FLOOR..LAST_FLOOR).map { floor -> floor * 100 + 1 }
     }
 }

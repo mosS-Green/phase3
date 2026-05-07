@@ -11,6 +11,13 @@ enum class FlatStatus {
         EMPTY -> null
     }
 
+    /** Supabase DB status string */
+    fun toDbValue(): String = when (this) {
+        COMPLETE -> "complete"
+        WIP -> "wip"
+        EMPTY -> "empty"
+    }
+
     fun next(): FlatStatus = when (this) {
         EMPTY -> COMPLETE
         COMPLETE -> WIP

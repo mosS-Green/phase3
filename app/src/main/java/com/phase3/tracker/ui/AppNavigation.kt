@@ -66,7 +66,7 @@ fun AppNavigation(viewModel: MainViewModel) {
                     allContractors = viewModel.getAllContractors(),
                     allGroupNames = viewModel.getAllGroupNames(),
                     onNavigateToData = { navController.navigate(Screen.Data.route) },
-                    onDownload = { viewModel.downloadFromGoogleSheets() },
+                    onDownload = { viewModel.refreshFromSupabase() },
                     onSaveToDownloads = { viewModel.saveExcelToDownloads() },
                     onToggleStatusFilter = { viewModel.toggleStatusFilter(it) },
                     onToggleCategoryFilter = { viewModel.toggleCategoryFilter(it) },
@@ -96,7 +96,7 @@ fun AppNavigation(viewModel: MainViewModel) {
                     onTowerClick = { towerIndex ->
                         navController.navigate(Screen.Tower.createRoute(towerIndex))
                     },
-                    onDownload = { viewModel.downloadFromGoogleSheets() },
+                    onDownload = { viewModel.refreshFromSupabase() },
                     onBack = { navController.popBackStack() }
                 )
             }

@@ -2,6 +2,11 @@ name: Android Release
 
 on:
   workflow_dispatch:
+    inputs:
+      version_name:
+        description: 'Version name (e.g. v1.3)'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -29,31 +34,58 @@ jobs:
           gradle wrapper --gradle-version 8.9
           chmod +x gradlew
 
-      - name: Build Debug APK
+      - name: Decode Keystore
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > ${{ github.workspace }}/release-keystore.jks
+
+      - name: Build Release APK
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
-        run: ./gradlew assembleDebug
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: ./gradlew assembleRelease
+
+      - name: Sign APK
+        run: |
+          # Find the unsigned release APK
+          UNSIGNED_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
+
+          # Sign with apksigner (bundled in Android SDK on GitHub runners)
+          BUILD_TOOLS_DIR="${ANDROID_HOME}/build-tools/$(ls ${ANDROID_HOME}/build-tools/ | sort -V | tail -1)"
+
+          ${BUILD_TOOLS_DIR}/apksigner sign \
+            --ks ${{ github.workspace }}/release-keystore.jks \
+            --ks-pass pass:${{ secrets.KEYSTORE_PASSWORD }} \
+            --ks-key-alias ${{ secrets.KEY_ALIAS }} \
+            --key-pass pass:${{ secrets.KEY_PASSWORD }} \
+            --out app/build/outputs/apk/release/app-release-signed.apk \
+            "$UNSIGNED_APK"
+
+          # Verify the signature is valid
+          ${BUILD_TOOLS_DIR}/apksigner verify --verbose \
+            app/build/outputs/apk/release/app-release-signed.apk
 
       - name: Determine Version Name
         id: version
         run: |
-          COMMIT_MSG="${{ github.event.head_commit.message }}"
-          
-          # Try to extract version if they wrote [release v1.2] etc
-          if [[ "$COMMIT_MSG" =~ \[release\ (v?[0-9a-zA-Z.-]+)\] ]]; then
-            REF_NAME="${BASH_REMATCH[1]}"
+          INPUT_VERSION="${{ github.event.inputs.version_name }}"
+
+          if [ -n "$INPUT_VERSION" ]; then
+            VERSION="$INPUT_VERSION"
           else
-            # Default to "latest-commitHash" if just [release] was written
-            REF_NAME="latest-${GITHUB_SHA::7}"
+            VERSION="latest-${GITHUB_SHA::7}"
           fi
-          
-          # Normalize
-          echo "VERSION_NAME=$REF_NAME" >> $GITHUB_ENV
+
+          echo "VERSION_NAME=$VERSION" >> $GITHUB_ENV
 
       - name: Rename APK
         run: |
-          mv app/build/outputs/apk/debug/app-debug.apk Phase3-Tracker-${{ env.VERSION_NAME }}.apk
+          mv app/build/outputs/apk/release/app-release-signed.apk Phase3-Tracker-${{ env.VERSION_NAME }}.apk
+
+      - name: Cleanup Keystore
+        if: always()
+        run: rm -f ${{ github.workspace }}/release-keystore.jks
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

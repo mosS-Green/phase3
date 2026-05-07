@@ -3,38 +3,33 @@ package com.phase3.tracker.viewmodel
 import android.app.Application
 import android.content.ContentValues
 import android.content.Context
-import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.phase3.tracker.data.CellUpdate
 import com.phase3.tracker.data.ExcelManager
-import com.phase3.tracker.data.GoogleSync
+import com.phase3.tracker.data.SupabaseClient
 import com.phase3.tracker.model.Activity
 import com.phase3.tracker.model.FlatStatus
 import com.phase3.tracker.model.Tower
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.withContext
-import java.io.File
-import java.io.FileOutputStream
+import org.json.JSONArray
+import org.json.JSONObject
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
+    private val supabase = SupabaseClient()
     private val excelManager = ExcelManager()
-    private val googleSync = GoogleSync()
 
     private val _towers = MutableStateFlow<List<Tower>>(emptyList())
     val towers: StateFlow<List<Tower>> = _towers.asStateFlow()
@@ -48,7 +43,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isDownloading = MutableStateFlow(false)
     val isDownloading: StateFlow<Boolean> = _isDownloading.asStateFlow()
 
-    // Sync queue tracking
     private val _isSyncing = MutableStateFlow(false)
     val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
 
@@ -83,121 +77,120 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _selectedContractor = MutableStateFlow("All")
     val selectedContractor: StateFlow<String> = _selectedContractor.asStateFlow()
 
-    private val excelFile: File
-        get() = File(getApplication<Application>().filesDir, "Ph-03 Tower Internal Finishing Work.xlsx")
+    // ── Debounce system for batching flat status updates ─────────
+    private data class PendingStatus(
+        val activityId: Int,
+        val flatNumber: Int,
+        val status: String,
+        val percentage: Int
+    )
 
-    // ── Parallel sync system ────────────────────────────────────────
-    // Debounces updates for 500ms, then fires all pending updates
-    // using 5 concurrent individual updateCell calls (proven endpoint).
-    private val pendingUpdates = mutableListOf<CellUpdate>()
+    private val pendingUpdates = mutableListOf<PendingStatus>()
     private val pendingLock = Any()
     private var debounceJob: Job? = null
-    private val syncSemaphore = Semaphore(5) // max 5 concurrent HTTP calls
 
     companion object {
         private const val DEBOUNCE_MS = 500L
     }
 
     init {
-        loadExcel()
+        loadFromSupabase()
     }
 
-    private fun enqueueUpdate(sheetName: String, row: Int, col: Int, value: String) {
-        synchronized(pendingLock) {
-            pendingUpdates.add(CellUpdate(sheetName, row, col, value))
-        }
-        _isSyncing.value = true
-        _syncDone.value = false
+    // ── Data Loading ─────────────────────────────────────────────
 
-        // Only cancel the debounce delay — not any running sync
-        debounceJob?.cancel()
-        debounceJob = viewModelScope.launch {
-            delay(DEBOUNCE_MS)
-            // Launch flush in a separate scope so debounce cancel doesn't kill it
-            viewModelScope.launch { flushPendingUpdates() }
-        }
-    }
-
-    /** Encode group name + usePercentage flag for Excel column A */
-    private fun encodeGroupColumn(groupName: String, usePercentage: Boolean): String {
-        return if (usePercentage) "$groupName|%" else groupName
-    }
-
-    private suspend fun flushPendingUpdates() {
-        val updates: List<CellUpdate>
-        synchronized(pendingLock) {
-            updates = pendingUpdates.toList()
-            pendingUpdates.clear()
-        }
-
-        if (updates.isEmpty()) {
-            _isSyncing.value = false
-            return
-        }
-
-        // NonCancellable: survive any future debounce cancellations
-        withContext(NonCancellable + Dispatchers.IO) {
-            var failCount = 0
-            try {
-                // Fire ALL updates concurrently, semaphore limits to 5 at a time
-                val jobs = updates.map { update ->
-                    async {
-                        syncSemaphore.acquire()
-                        try {
-                            val result = googleSync.updateCell(
-                                update.sheetName, update.row, update.col, update.value
-                            )
-                            if (result.isFailure) {
-                                failCount++
-                            }
-                        } finally {
-                            syncSemaphore.release()
-                        }
-                    }
-                }
-                jobs.awaitAll()
-
-                if (failCount > 0) {
-                    _statusMessage.value = "$failCount update(s) failed"
-                }
-            } catch (e: Exception) {
-                _statusMessage.value = "Sync error: ${e.message}"
-            } finally {
-                _isSyncing.value = false
-                _syncDone.value = true
-                viewModelScope.launch {
-                    delay(3000)
-                    _syncDone.value = false
-                }
-            }
-        }
-    }
-
-    fun loadExcel() {
+    fun loadFromSupabase() {
         viewModelScope.launch {
+            _isDownloading.value = true
             try {
-                if (excelFile.exists()) {
-                    // Load cached data immediately
-                    withContext(Dispatchers.IO) {
-                        val towers = excelFile.inputStream().use { stream ->
-                            excelManager.loadWorkbook(stream)
+                val towersResult = supabase.fetchTowers()
+                val towerRows = towersResult.getOrThrow()
+
+                val towerList = mutableListOf<Tower>()
+                for (i in 0 until towerRows.length()) {
+                    val t = towerRows.getJSONObject(i)
+                    val towerId = t.getInt("id")
+                    val towerName = t.getString("name")
+                    val sheetName = t.getString("sheet_name")
+
+                    // Fetch activities for this tower
+                    val activitiesResult = supabase.fetchActivities(towerId)
+                    val activityRows = activitiesResult.getOrThrow()
+
+                    val activities = mutableListOf<Activity>()
+                    for (j in 0 until activityRows.length()) {
+                        val a = activityRows.getJSONObject(j)
+                        val activityId = a.getInt("id")
+
+                        // Fetch flat statuses for this activity
+                        val statusesResult = supabase.fetchFlatStatuses(activityId)
+                        val statusRows = statusesResult.getOrThrow()
+
+                        val statuses = mutableMapOf<Int, FlatStatus>()
+                        val percentages = mutableMapOf<Int, Int>()
+
+                        // Initialize all flats to empty
+                        Activity.FLAT_NUMBERS.forEach { flatNum ->
+                            statuses[flatNum] = FlatStatus.EMPTY
+                            percentages[flatNum] = 0
                         }
-                        _towers.value = towers
+
+                        // Fill in actual data from DB
+                        for (k in 0 until statusRows.length()) {
+                            val s = statusRows.getJSONObject(k)
+                            val flatNum = s.getInt("flat_number")
+                            val statusStr = s.getString("status")
+                            val pct = s.getInt("percentage")
+
+                            statuses[flatNum] = when (statusStr) {
+                                "complete" -> FlatStatus.COMPLETE
+                                "wip" -> FlatStatus.WIP
+                                else -> FlatStatus.EMPTY
+                            }
+                            percentages[flatNum] = pct
+                        }
+
+                        val groupName = a.getString("group_name")
+                        val usePercentage = a.getBoolean("use_percentage")
+
+                        activities.add(
+                            Activity(
+                                id = activityId,
+                                towerId = towerId,
+                                name = a.getString("name"),
+                                sortOrder = a.getInt("sort_order"),
+                                groupName = groupName,
+                                groupIndex = Activity.groupIndexFor(groupName),
+                                contractor = a.optString("contractor", ""),
+                                categories = Activity.parseCategories(a.optString("categories", "")),
+                                usePercentage = usePercentage,
+                                isFloorBased = a.getBoolean("is_floor_based"),
+                                weightage = a.getInt("weightage"),
+                                statuses = statuses,
+                                percentages = if (usePercentage) percentages else mutableMapOf()
+                            )
+                        )
                     }
-                    _isLoading.value = false
-                    // Background sync from Google Sheets
-                    downloadFromGoogleSheets(silent = true)
-                } else {
-                    // First boot: download from Google Sheets
-                    _isLoading.value = true
-                    downloadFromGoogleSheets(silent = false)
+
+                    towerList.add(Tower(id = towerId, name = towerName, sheetName = sheetName, activities = activities))
                 }
+
+                _towers.value = towerList
             } catch (e: Exception) {
-                _statusMessage.value = "Error loading local data: ${e.message}"
+                _statusMessage.value = "Load failed: ${e.message}"
+            } finally {
+                _isDownloading.value = false
                 _isLoading.value = false
             }
         }
     }
+
+    /** Refresh data from Supabase (pull button) */
+    fun refreshFromSupabase() {
+        loadFromSupabase()
+    }
+
+    // ── Flat Status Updates ──────────────────────────────────────
 
     fun toggleFlatStatus(towerIndex: Int, activityIndex: Int, flatNumber: Int) {
         val towersList = _towers.value.toMutableList()
@@ -205,7 +198,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val activity = tower.activities.getOrNull(activityIndex) ?: return
 
         if (activity.isFloorBased) {
-            // For floor-based, toggle all flats on the floor together
             val floor = flatNumber / 100
             toggleFloorStatus(towerIndex, activityIndex, floor)
             return
@@ -220,17 +212,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         val newActivities = tower.activities.toMutableList()
         newActivities[activityIndex] = newActivity
-        
-        val newTower = tower.copy(activities = newActivities)
-        towersList[towerIndex] = newTower
-
+        towersList[towerIndex] = tower.copy(activities = newActivities)
         _towers.value = towersList.toList()
 
-        val colIdx = ExcelManager.flatToColIndex(flatNumber)
-        val value = newStatus.toExcelValue() ?: ""
-        enqueueUpdate(tower.sheetName, activity.rowIndex, colIdx + 1, value)
-        
-        excelManager.updateStatus(tower.sheetName, activity.rowIndex, flatNumber, newStatus)
+        enqueueStatusUpdate(activity.id, flatNumber, newStatus.toDbValue(), 0)
     }
 
     fun toggleFloorStatus(towerIndex: Int, activityIndex: Int, floor: Int) {
@@ -251,20 +236,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val newStatuses = activity.statuses.toMutableMap()
         for (flatNum in flatsOnFloor) {
             newStatuses[flatNum] = targetStatus
-            
-            val colIdx = ExcelManager.flatToColIndex(flatNum)
-            val value = targetStatus.toExcelValue() ?: ""
-            enqueueUpdate(tower.sheetName, activity.rowIndex, colIdx + 1, value)
-            excelManager.updateStatus(tower.sheetName, activity.rowIndex, flatNum, targetStatus)
+            enqueueStatusUpdate(activity.id, flatNum, targetStatus.toDbValue(), 0)
         }
 
         val newActivity = activity.copy(statuses = newStatuses)
         val newActivities = tower.activities.toMutableList()
         newActivities[activityIndex] = newActivity
-        
-        val newTower = tower.copy(activities = newActivities)
-        towersList[towerIndex] = newTower
-
+        towersList[towerIndex] = tower.copy(activities = newActivities)
         _towers.value = towersList.toList()
     }
 
@@ -277,31 +255,82 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val newPercentages = activity.percentages.toMutableMap()
 
         if (activity.isFloorBased) {
-            // Update all 4 flats on the floor
             val floor = flatNumber / 100
             val flatsOnFloor = (1..4).map { floor * 100 + it }
             for (flatNum in flatsOnFloor) {
                 newPercentages[flatNum] = clamped
-                val colIdx = ExcelManager.flatToColIndex(flatNum)
-                enqueueUpdate(tower.sheetName, activity.rowIndex, colIdx + 1, clamped.toString())
-                excelManager.updatePercentage(tower.sheetName, activity.rowIndex, flatNum, clamped)
+                enqueueStatusUpdate(activity.id, flatNum, "empty", clamped)
             }
         } else {
             newPercentages[flatNumber] = clamped
-            val colIdx = ExcelManager.flatToColIndex(flatNumber)
-            enqueueUpdate(tower.sheetName, activity.rowIndex, colIdx + 1, clamped.toString())
-            excelManager.updatePercentage(tower.sheetName, activity.rowIndex, flatNumber, clamped)
+            enqueueStatusUpdate(activity.id, flatNumber, "empty", clamped)
         }
 
         val newActivity = activity.copy(percentages = newPercentages)
         val newActivities = tower.activities.toMutableList()
         newActivities[activityIndex] = newActivity
-
-        val newTower = tower.copy(activities = newActivities)
-        towersList[towerIndex] = newTower
-
+        towersList[towerIndex] = tower.copy(activities = newActivities)
         _towers.value = towersList.toList()
     }
+
+    private fun enqueueStatusUpdate(activityId: Int, flatNumber: Int, status: String, percentage: Int) {
+        synchronized(pendingLock) {
+            // Replace any existing update for same activity+flat
+            pendingUpdates.removeAll { it.activityId == activityId && it.flatNumber == flatNumber }
+            pendingUpdates.add(PendingStatus(activityId, flatNumber, status, percentage))
+        }
+        _isSyncing.value = true
+        _syncDone.value = false
+
+        debounceJob?.cancel()
+        debounceJob = viewModelScope.launch {
+            delay(DEBOUNCE_MS)
+            viewModelScope.launch { flushPendingUpdates() }
+        }
+    }
+
+    private suspend fun flushPendingUpdates() {
+        val updates: List<PendingStatus>
+        synchronized(pendingLock) {
+            updates = pendingUpdates.toList()
+            pendingUpdates.clear()
+        }
+
+        if (updates.isEmpty()) {
+            _isSyncing.value = false
+            return
+        }
+
+        withContext(NonCancellable + Dispatchers.IO) {
+            try {
+                val jsonArray = JSONArray()
+                for (u in updates) {
+                    jsonArray.put(JSONObject().apply {
+                        put("activity_id", u.activityId)
+                        put("flat_number", u.flatNumber)
+                        put("status", u.status)
+                        put("percentage", u.percentage)
+                    })
+                }
+
+                val result = supabase.upsertFlatStatuses(jsonArray)
+                if (result.isFailure) {
+                    _statusMessage.value = "Sync failed: ${result.exceptionOrNull()?.message}"
+                }
+            } catch (e: Exception) {
+                _statusMessage.value = "Sync error: ${e.message}"
+            } finally {
+                _isSyncing.value = false
+                _syncDone.value = true
+                viewModelScope.launch {
+                    delay(3000)
+                    _syncDone.value = false
+                }
+            }
+        }
+    }
+
+    // ── Activity CRUD ────────────────────────────────────────────
 
     fun addActivity(
         towerIndex: Int,
@@ -315,84 +344,103 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val towersList = _towers.value.toMutableList()
             val tower = towersList.getOrNull(towerIndex) ?: return@launch
-            val categoryStr = Activity.serializeCategories(categories)
-            val groupCol = encodeGroupColumn(groupName, usePercentage)
+            val resolvedGroup = groupName.ifBlank { "Other" }
+            val isFloorBased = resolvedGroup.contains("Common", ignoreCase = true)
+            val nextSortOrder = tower.activities.maxOfOrNull { it.sortOrder + 1 } ?: 0
+
             withContext(Dispatchers.IO) {
-                val newRow = excelManager.addActivity(tower.sheetName, activityName, contractor, categoryStr, groupCol, weightage)
-                if (newRow > 0) {
-                    val resolvedGroup = groupName.ifBlank { Tower.groupForRow(newRow)?.name ?: "Other" }
-                    val isFloorBased = resolvedGroup.contains("Common", ignoreCase = true)
-                    val statuses = mutableMapOf<Int, FlatStatus>()
-                    val percentages = mutableMapOf<Int, Int>()
-                    ExcelManager.FLAT_NUMBERS.forEach {
-                        statuses[it] = FlatStatus.EMPTY
-                        if (usePercentage) percentages[it] = 0
-                    }
-
-                    val newActivity = Activity(
-                        name = activityName,
-                        rowIndex = newRow,
-                        groupName = resolvedGroup,
-                        groupIndex = Activity.groupIndexFor(resolvedGroup),
-                        contractor = contractor,
-                        categories = categories,
-                        usePercentage = usePercentage,
-                        isFloorBased = isFloorBased,
-                        weightage = weightage,
-                        statuses = statuses,
-                        percentages = percentages
-                    )
-                    
-                    val newActivities = tower.activities.toMutableList().apply { add(newActivity) }
-                    towersList[towerIndex] = tower.copy(activities = newActivities)
-
-                    // Push metadata to Google Sheets (col A includes % flag)
-                    enqueueUpdate(tower.sheetName, newRow, 1, groupCol)          // col A
-                    enqueueUpdate(tower.sheetName, newRow, 2, activityName)       // col B
-                    enqueueUpdate(tower.sheetName, newRow, 3, contractor)         // col C
-                    enqueueUpdate(tower.sheetName, newRow, 4, categoryStr)        // col D
-                    enqueueUpdate(tower.sheetName, newRow, 5, weightage.toString()) // col E
-
-                    // ── Mirror to the other tower ───────────────────────────
-                    val otherTowerIndex = if (towerIndex == 0) 1 else 0
-                    val otherTower = towersList.getOrNull(otherTowerIndex)
-                    if (otherTower != null) {
-                        val mirrorRow = excelManager.addActivity(
-                            otherTower.sheetName, activityName, contractor, categoryStr, groupCol, weightage
-                        )
-                        if (mirrorRow > 0) {
-                            val mirrorStatuses = mutableMapOf<Int, FlatStatus>()
-                            val mirrorPercentages = mutableMapOf<Int, Int>()
-                            ExcelManager.FLAT_NUMBERS.forEach {
-                                mirrorStatuses[it] = FlatStatus.EMPTY
-                                if (usePercentage) mirrorPercentages[it] = 0
-                            }
-                            val mirrorActivity = Activity(
-                                name = activityName,
-                                rowIndex = mirrorRow,
-                                groupName = resolvedGroup,
-                                groupIndex = Activity.groupIndexFor(resolvedGroup),
-                                contractor = contractor,
-                                categories = categories,
-                                usePercentage = usePercentage,
-                                isFloorBased = isFloorBased,
-                                weightage = weightage,
-                                statuses = mirrorStatuses,
-                                percentages = mirrorPercentages
-                            )
-                            val newOtherActivities = otherTower.activities.toMutableList().apply { add(mirrorActivity) }
-                            towersList[otherTowerIndex] = otherTower.copy(activities = newOtherActivities)
-
-                            enqueueUpdate(otherTower.sheetName, mirrorRow, 1, groupCol)
-                            enqueueUpdate(otherTower.sheetName, mirrorRow, 2, activityName)
-                            enqueueUpdate(otherTower.sheetName, mirrorRow, 3, contractor)
-                            enqueueUpdate(otherTower.sheetName, mirrorRow, 4, categoryStr)
-                            enqueueUpdate(otherTower.sheetName, mirrorRow, 5, weightage.toString())
-                        }
-                    }
-
-                    _towers.value = towersList.toList()
+                // Insert into current tower
+                val payload = JSONObject().apply {
+                    put("tower_id", tower.id)
+                    put("name", activityName)
+                    put("group_name", resolvedGroup)
+                    put("contractor", contractor)
+                    put("categories", Activity.serializeCategories(categories))
+                    put("weightage", weightage)
+                    put("use_percentage", usePercentage)
+                    put("is_floor_based", isFloorBased)
+                    put("sort_order", nextSortOrder)
                 }
+
+                val result = supabase.insertActivity(payload)
+                val row = result.getOrNull()?.optJSONObject(0)
+                if (row == null) {
+                    _statusMessage.value = "Failed to add activity"
+                    return@withContext
+                }
+                val newId = row.getInt("id")
+
+                // Create empty flat statuses
+                val statuses = mutableMapOf<Int, FlatStatus>()
+                val percentages = mutableMapOf<Int, Int>()
+                Activity.FLAT_NUMBERS.forEach {
+                    statuses[it] = FlatStatus.EMPTY
+                    if (usePercentage) percentages[it] = 0
+                }
+
+                // Batch insert flat statuses
+                val flatArray = JSONArray()
+                Activity.FLAT_NUMBERS.forEach { flatNum ->
+                    flatArray.put(JSONObject().apply {
+                        put("activity_id", newId)
+                        put("flat_number", flatNum)
+                        put("status", "empty")
+                        put("percentage", 0)
+                    })
+                }
+                supabase.upsertFlatStatuses(flatArray)
+
+                val newActivity = Activity(
+                    id = newId, towerId = tower.id, name = activityName,
+                    sortOrder = nextSortOrder, groupName = resolvedGroup,
+                    groupIndex = Activity.groupIndexFor(resolvedGroup),
+                    contractor = contractor, categories = categories,
+                    usePercentage = usePercentage, isFloorBased = isFloorBased,
+                    weightage = weightage, statuses = statuses, percentages = percentages
+                )
+
+                val newActivities = tower.activities.toMutableList().apply { add(newActivity) }
+                towersList[towerIndex] = tower.copy(activities = newActivities)
+
+                // ── Mirror to the other tower ──
+                val otherTowerIndex = if (towerIndex == 0) 1 else 0
+                val otherTower = towersList.getOrNull(otherTowerIndex)
+                if (otherTower != null) {
+                    val mirrorPayload = JSONObject(payload.toString()).apply {
+                        put("tower_id", otherTower.id)
+                    }
+                    val mirrorResult = supabase.insertActivity(mirrorPayload)
+                    val mirrorRow = mirrorResult.getOrNull()?.optJSONObject(0)
+                    if (mirrorRow != null) {
+                        val mirrorId = mirrorRow.getInt("id")
+                        val mirrorStatuses = mutableMapOf<Int, FlatStatus>()
+                        val mirrorPercentages = mutableMapOf<Int, Int>()
+                        Activity.FLAT_NUMBERS.forEach {
+                            mirrorStatuses[it] = FlatStatus.EMPTY
+                            if (usePercentage) mirrorPercentages[it] = 0
+                        }
+
+                        val mirrorFlatArray = JSONArray()
+                        Activity.FLAT_NUMBERS.forEach { flatNum ->
+                            mirrorFlatArray.put(JSONObject().apply {
+                                put("activity_id", mirrorId)
+                                put("flat_number", flatNum)
+                                put("status", "empty")
+                                put("percentage", 0)
+                            })
+                        }
+                        supabase.upsertFlatStatuses(mirrorFlatArray)
+
+                        val mirrorActivity = newActivity.copy(
+                            id = mirrorId, towerId = otherTower.id,
+                            statuses = mirrorStatuses, percentages = mirrorPercentages
+                        )
+                        val newOtherActivities = otherTower.activities.toMutableList().apply { add(mirrorActivity) }
+                        towersList[otherTowerIndex] = otherTower.copy(activities = newOtherActivities)
+                    }
+                }
+
+                _towers.value = towersList.toList()
             }
             _statusMessage.value = "Activity added: $activityName"
         }
@@ -412,66 +460,48 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val towersList = _towers.value.toMutableList()
             val tower = towersList.getOrNull(towerIndex) ?: return@launch
             val activity = tower.activities.getOrNull(activityIndex) ?: return@launch
-            val oldName = activity.name  // capture before overwrite for mirror lookup
-            val categoryStr = Activity.serializeCategories(categories)
+            val oldName = activity.name
             val resolvedGroup = groupName.ifBlank { activity.groupName }
             val isFloorBased = resolvedGroup.contains("Common", ignoreCase = true)
-            val groupCol = encodeGroupColumn(resolvedGroup, usePercentage)
 
             withContext(Dispatchers.IO) {
-                excelManager.renameActivity(tower.sheetName, activity.rowIndex, newName, contractor, categoryStr, groupCol, weightage)
+                val payload = JSONObject().apply {
+                    put("name", newName)
+                    put("group_name", resolvedGroup)
+                    put("contractor", contractor)
+                    put("categories", Activity.serializeCategories(categories))
+                    put("weightage", weightage)
+                    put("use_percentage", usePercentage)
+                    put("is_floor_based", isFloorBased)
+                }
+
+                supabase.updateActivity(activity.id, payload)
 
                 val newActivity = activity.copy(
-                    name = newName,
-                    contractor = contractor,
-                    categories = categories,
-                    groupName = resolvedGroup,
-                    groupIndex = Activity.groupIndexFor(resolvedGroup),
-                    usePercentage = usePercentage,
-                    isFloorBased = isFloorBased,
-                    weightage = weightage
+                    name = newName, contractor = contractor, categories = categories,
+                    groupName = resolvedGroup, groupIndex = Activity.groupIndexFor(resolvedGroup),
+                    usePercentage = usePercentage, isFloorBased = isFloorBased, weightage = weightage
                 )
                 val newActivities = tower.activities.toMutableList()
                 newActivities[activityIndex] = newActivity
                 towersList[towerIndex] = tower.copy(activities = newActivities)
-                
-                // Push changes
-                enqueueUpdate(tower.sheetName, activity.rowIndex, 1, groupCol)
-                enqueueUpdate(tower.sheetName, activity.rowIndex, 2, newName)
-                enqueueUpdate(tower.sheetName, activity.rowIndex, 3, contractor)
-                enqueueUpdate(tower.sheetName, activity.rowIndex, 4, categoryStr)
-                enqueueUpdate(tower.sheetName, activity.rowIndex, 5, weightage.toString())
 
-                // ── Mirror rename to the other tower (match by old name) ──
+                // ── Mirror rename to the other tower ──
                 val otherTowerIndex = if (towerIndex == 0) 1 else 0
                 val otherTower = towersList.getOrNull(otherTowerIndex)
                 if (otherTower != null) {
                     val otherIdx = otherTower.activities.indexOfFirst { it.name == oldName }
                     if (otherIdx >= 0) {
                         val otherActivity = otherTower.activities[otherIdx]
-                        excelManager.renameActivity(
-                            otherTower.sheetName, otherActivity.rowIndex,
-                            newName, contractor, categoryStr, groupCol, weightage
-                        )
+                        supabase.updateActivity(otherActivity.id, payload)
                         val updatedOther = otherActivity.copy(
-                            name = newName,
-                            contractor = contractor,
-                            categories = categories,
-                            groupName = resolvedGroup,
-                            groupIndex = Activity.groupIndexFor(resolvedGroup),
-                            usePercentage = usePercentage,
-                            isFloorBased = isFloorBased,
-                            weightage = weightage
+                            name = newName, contractor = contractor, categories = categories,
+                            groupName = resolvedGroup, groupIndex = Activity.groupIndexFor(resolvedGroup),
+                            usePercentage = usePercentage, isFloorBased = isFloorBased, weightage = weightage
                         )
                         val newOtherActivities = otherTower.activities.toMutableList()
                         newOtherActivities[otherIdx] = updatedOther
                         towersList[otherTowerIndex] = otherTower.copy(activities = newOtherActivities)
-
-                        enqueueUpdate(otherTower.sheetName, otherActivity.rowIndex, 1, groupCol)
-                        enqueueUpdate(otherTower.sheetName, otherActivity.rowIndex, 2, newName)
-                        enqueueUpdate(otherTower.sheetName, otherActivity.rowIndex, 3, contractor)
-                        enqueueUpdate(otherTower.sheetName, otherActivity.rowIndex, 4, categoryStr)
-                        enqueueUpdate(otherTower.sheetName, otherActivity.rowIndex, 5, weightage.toString())
                     }
                 }
 
@@ -489,26 +519,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val activityName = activity.name
 
             withContext(Dispatchers.IO) {
-                // Blank the row locally and propagate to Sheets
-                excelManager.deleteActivity(tower.sheetName, activity.rowIndex)
-                for (col in 1..5) {
-                    enqueueUpdate(tower.sheetName, activity.rowIndex, col, "")
-                }
+                supabase.deleteActivity(activity.id)
 
                 val newActivities = tower.activities.toMutableList().apply { removeAt(activityIndex) }
                 towersList[towerIndex] = tower.copy(activities = newActivities)
 
-                // ── Mirror deletion to the other tower ──────────────────
+                // ── Mirror deletion to the other tower ──
                 val otherTowerIndex = if (towerIndex == 0) 1 else 0
                 val otherTower = towersList.getOrNull(otherTowerIndex)
                 if (otherTower != null) {
                     val otherIdx = otherTower.activities.indexOfFirst { it.name == activityName }
                     if (otherIdx >= 0) {
                         val otherActivity = otherTower.activities[otherIdx]
-                        excelManager.deleteActivity(otherTower.sheetName, otherActivity.rowIndex)
-                        for (col in 1..5) {
-                            enqueueUpdate(otherTower.sheetName, otherActivity.rowIndex, col, "")
-                        }
+                        supabase.deleteActivity(otherActivity.id)
                         val newOtherActivities = otherTower.activities.toMutableList().apply { removeAt(otherIdx) }
                         towersList[otherTowerIndex] = otherTower.copy(activities = newOtherActivities)
                     }
@@ -520,45 +543,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun downloadFromGoogleSheets(silent: Boolean = false) {
-        viewModelScope.launch {
-            _isDownloading.value = true
-            try {
-                val result = googleSync.downloadExcel()
-                result.fold(
-                    onSuccess = { bytes ->
-                        withContext(Dispatchers.IO) {
-                            excelFile.writeBytes(bytes)
-                            val towers = excelFile.inputStream().use { stream ->
-                                excelManager.loadWorkbook(stream)
-                            }
-                            _towers.value = towers
-                        }
-                        if (!silent) {
-                            _statusMessage.value = "Google Sheet Synced!"
-                        }
-                    },
-                    onFailure = {
-                        if (!silent) {
-                            _statusMessage.value = "Download failed: ${it.message}"
-                        }
-                    }
-                )
-            } catch (e: Exception) {
-                if (!silent) {
-                    _statusMessage.value = "Download error: ${e.message}"
-                }
-            } finally {
-                _isDownloading.value = false
-                _isLoading.value = false
-            }
-        }
-    }
+    // ── XLSX Export ──────────────────────────────────────────────
 
     fun saveExcelToDownloads(): Uri? {
         val app = getApplication<Application>()
         try {
-            if (!excelFile.exists()) return null
+            val towers = _towers.value
+            if (towers.isEmpty()) return null
 
             val fileName = "Phase3_${System.currentTimeMillis()}.xlsx"
 
@@ -571,7 +562,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val uri = app.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
                 uri?.let {
                     app.contentResolver.openOutputStream(it)?.use { out ->
-                        excelFile.inputStream().use { inp -> inp.copyTo(out) }
+                        val wb = excelManager.buildWorkbook(towers)
+                        excelManager.writeWorkbook(wb, out)
                     }
                 }
                 _statusMessage.value = "Saved to Downloads: $fileName"
@@ -580,8 +572,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 @Suppress("DEPRECATION")
                 val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
                 val outFile = File(downloadsDir, fileName)
-                excelFile.inputStream().use { inp ->
-                    FileOutputStream(outFile).use { out -> inp.copyTo(out) }
+                outFile.outputStream().use { out ->
+                    val wb = excelManager.buildWorkbook(towers)
+                    excelManager.writeWorkbook(wb, out)
                 }
                 _statusMessage.value = "Saved to Downloads: $fileName"
                 return Uri.fromFile(outFile)
@@ -592,24 +585,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // Filter functions
+    // ── Filters ─────────────────────────────────────────────────
+
     fun toggleStatusFilter(filter: StatusFilter) {
         val current = _selectedStatusFilters.value.toMutableSet()
-        if (current.contains(filter)) {
-            current.remove(filter)
-        } else {
-            current.add(filter)
-        }
+        if (current.contains(filter)) current.remove(filter) else current.add(filter)
         _selectedStatusFilters.value = current
     }
 
     fun toggleCategoryFilter(category: String) {
         val current = _selectedCategories.value.toMutableSet()
-        if (current.contains(category)) {
-            current.remove(category)
-        } else {
-            current.add(category)
-        }
+        if (current.contains(category)) current.remove(category) else current.add(category)
         _selectedCategories.value = current
     }
 
@@ -617,36 +603,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _selectedContractor.value = contractor
     }
 
-    /** Get all unique contractors across all towers */
     fun getAllContractors(): List<String> {
-        return _towers.value
-            .flatMap { it.activities }
-            .map { it.contractor }
-            .filter { it.isNotBlank() }
-            .distinct()
-            .sorted()
+        return _towers.value.flatMap { it.activities }.map { it.contractor }
+            .filter { it.isNotBlank() }.distinct().sorted()
     }
 
-    /** Get all unique group names across all towers */
     fun getAllGroupNames(): List<String> {
-        val fromData = _towers.value
-            .flatMap { it.activities }
-            .map { it.groupName }
-            .filter { it.isNotBlank() }
-            .distinct()
-
+        val fromData = _towers.value.flatMap { it.activities }.map { it.groupName }
+            .filter { it.isNotBlank() }.distinct()
         val defaults = Activity.DEFAULT_GROUP_NAMES
         return (fromData + defaults).distinct().sorted()
     }
 
-    /** Apply filters to get the filtered + sorted list of activities for a tower */
     fun getFilteredActivities(tower: Tower): List<Activity> {
         val statusFilters = _selectedStatusFilters.value
         val categoryFilters = _selectedCategories.value
         val contractor = _selectedContractor.value
 
         return tower.activities.filter { activity ->
-            // Status filter
             val statusMatch = statusFilters.isEmpty() || statusFilters.any { filter ->
                 when (filter) {
                     StatusFilter.COMPLETED -> activity.isFullyComplete
@@ -654,23 +628,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     StatusFilter.EMPTY -> activity.isFullyEmpty
                 }
             }
-
-            // Category filter (multi-select: show if activity has ANY selected category)
             val categoryMatch = categoryFilters.isEmpty() || activity.categories.any { it in categoryFilters }
-
-            // Contractor filter (single-select)
             val contractorMatch = contractor == "All" || activity.contractor.equals(contractor, ignoreCase = true)
-
             statusMatch && categoryMatch && contractorMatch
-        }.sortedBy { it.name.lowercase() }  // alphabetical within filter results
+        }.sortedBy { it.name.lowercase() }
     }
 
     fun clearStatusMessage() {
         _statusMessage.value = null
-    }
-
-    override fun onCleared() {
-        super.onCleared()
-        excelManager.close()
     }
 }
