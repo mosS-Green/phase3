@@ -1,5 +1,9 @@
 package com.phase3.tracker.ui
 
+import android.app.Activity
+import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
@@ -14,18 +18,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import com.phase3.tracker.ui.screens.ActivityScreen
-import com.phase3.tracker.ui.screens.DataScreen
-import com.phase3.tracker.ui.screens.HomeScreen
-import com.phase3.tracker.ui.screens.TowerScreen
+import com.phase3.tracker.ui.screens.*
+import com.phase3.tracker.viewmodel.DWViewModel
 import com.phase3.tracker.viewmodel.MainViewModel
 
 sealed class Screen(val route: String) {
@@ -36,6 +40,14 @@ sealed class Screen(val route: String) {
     }
     data object Activity : Screen("activity/{towerIndex}/{activityIndex}") {
         fun createRoute(towerIndex: Int, activityIndex: Int) = "activity/$towerIndex/$activityIndex"
+    }
+    // DW screens
+    data object DWHome : Screen("dw_home")
+    data object DWColumn : Screen("dw_column/{towerIndex}") {
+        fun createRoute(towerIndex: Int) = "dw_column/$towerIndex"
+    }
+    data object DWFlat : Screen("dw_flat/{towerIndex}/{flatNumber}") {
+        fun createRoute(towerIndex: Int, flatNumber: Int) = "dw_flat/$towerIndex/$flatNumber"
     }
 }
 
@@ -50,6 +62,27 @@ fun AppNavigation(viewModel: MainViewModel) {
     val selectedStatusFilters by viewModel.selectedStatusFilters.collectAsStateWithLifecycle()
     val selectedCategories by viewModel.selectedCategories.collectAsStateWithLifecycle()
     val selectedContractor by viewModel.selectedContractor.collectAsStateWithLifecycle()
+
+    val dwViewModel: DWViewModel = viewModel()
+    val dwTypes by dwViewModel.dwTypes.collectAsStateWithLifecycle()
+    val dwRooms by dwViewModel.rooms.collectAsStateWithLifecycle()
+    val dwIsLoading by dwViewModel.isLoading.collectAsStateWithLifecycle()
+    val dwIsSyncing by dwViewModel.isSyncing.collectAsStateWithLifecycle()
+
+    val context = LocalContext.current
+
+    // File picker for DW Excel import
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            result.data?.data?.let { uri ->
+                context.contentResolver.openInputStream(uri)?.let { stream ->
+                    dwViewModel.importFromExcel(stream, towers)
+                }
+            }
+        }
+    }
 
     // Global overlay: NavHost + persistent sync indicator
     Box(modifier = Modifier.fillMaxSize()) {
@@ -97,6 +130,7 @@ fun AppNavigation(viewModel: MainViewModel) {
                         navController.navigate(Screen.Tower.createRoute(towerIndex))
                     },
                     onDownload = { viewModel.refreshFromSupabase() },
+                    onDWClick = { navController.navigate(Screen.DWHome.route) },
                     onBack = { navController.popBackStack() }
                 )
             }
@@ -161,11 +195,89 @@ fun AppNavigation(viewModel: MainViewModel) {
                     )
                 }
             }
+
+            // ── DW Screens ──────────────────────────────────────
+
+            composable(Screen.DWHome.route) {
+                DWHomeScreen(
+                    towers = towers,
+                    dwTypes = dwTypes,
+                    onTowerClick = { towerIndex ->
+                        navController.navigate(Screen.DWColumn.createRoute(towerIndex))
+                    },
+                    onAddType = { name, kind, h, b -> dwViewModel.addType(name, kind, h, b) },
+                    onUpdateType = { id, name, kind, h, b -> dwViewModel.updateType(id, name, kind, h, b) },
+                    onDeleteType = { id -> dwViewModel.deleteType(id) },
+                    onExportExcel = { dwViewModel.exportToExcel(towers) },
+                    onImportExcel = {
+                        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                            addCategory(Intent.CATEGORY_OPENABLE)
+                            type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        }
+                        importLauncher.launch(intent)
+                    },
+                    onBack = { navController.popBackStack() }
+                )
+            }
+
+            composable(
+                route = Screen.DWColumn.route,
+                arguments = listOf(navArgument("towerIndex") { type = NavType.IntType })
+            ) { backStackEntry ->
+                val towerIndex = backStackEntry.arguments?.getInt("towerIndex") ?: 0
+                val tower = towers.getOrNull(towerIndex)
+
+                if (tower != null) {
+                    DWColumnScreen(
+                        towerName = tower.name,
+                        towerId = tower.id,
+                        rooms = dwRooms,
+                        dwTypes = dwTypes,
+                        isLoading = dwIsLoading,
+                        onLoadRooms = { colType -> dwViewModel.loadRooms(tower.id, colType) },
+                        onAddRoom = { colType, name, typeIds ->
+                            dwViewModel.addRoom(tower.id, colType, name, typeIds)
+                        },
+                        onUpdateRoom = { roomId, colType, name, typeIds ->
+                            dwViewModel.updateRoom(roomId, tower.id, colType, name, typeIds)
+                        },
+                        onDeleteRoom = { roomId, colType ->
+                            dwViewModel.deleteRoom(roomId, tower.id, colType)
+                        },
+                        onFlatClick = { flatNumber ->
+                            navController.navigate(Screen.DWFlat.createRoute(towerIndex, flatNumber))
+                        },
+                        flatCompletion = { flatNumber -> dwViewModel.flatColumnCompletion(flatNumber) },
+                        columnCompletion = { dwViewModel.columnCompletion() },
+                        onBack = { navController.popBackStack() }
+                    )
+                }
+            }
+
+            composable(
+                route = Screen.DWFlat.route,
+                arguments = listOf(
+                    navArgument("towerIndex") { type = NavType.IntType },
+                    navArgument("flatNumber") { type = NavType.IntType }
+                )
+            ) { backStackEntry ->
+                val flatNumber = backStackEntry.arguments?.getInt("flatNumber") ?: 0
+
+                DWFlatScreen(
+                    flatNumber = flatNumber,
+                    rooms = dwRooms,
+                    onToggleStatus = { roomId, typeId ->
+                        dwViewModel.toggleDWStatus(roomId, typeId, flatNumber)
+                    },
+                    flatCompletion = dwViewModel.flatColumnCompletion(flatNumber),
+                    onBack = { navController.popBackStack() }
+                )
+            }
         }
 
         // ── Persistent global sync indicator ────────────────────────
         GlobalSyncIndicator(
-            isSyncing = isSyncing,
+            isSyncing = isSyncing || dwIsSyncing,
             syncDone = syncDone,
             isDownloading = isDownloading,
             modifier = Modifier

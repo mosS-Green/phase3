@@ -74,6 +74,68 @@ class SupabaseClient {
     suspend fun deleteActivity(activityId: Int): Result<Unit> =
         delete("activities?id=eq.$activityId")
 
+    // ══════════════════════════════════════════════════════════════════
+    // Aluminium Doors & Windows
+    // ══════════════════════════════════════════════════════════════════
+
+    // ── DW Types ────────────────────────────────────────────────────
+    suspend fun fetchDWTypes(): Result<JSONArray> = get("dw_types?select=*&order=name.asc")
+
+    suspend fun insertDWType(payload: JSONObject): Result<JSONArray> =
+        post("dw_types", payload.toString())
+
+    suspend fun updateDWType(id: Int, payload: JSONObject): Result<JSONArray> =
+        patch("dw_types?id=eq.$id", payload.toString())
+
+    suspend fun deleteDWType(id: Int): Result<Unit> = delete("dw_types?id=eq.$id")
+
+    // ── DW Rooms ────────────────────────────────────────────────────
+    suspend fun fetchDWRooms(towerId: Int, columnType: String): Result<JSONArray> =
+        get("dw_rooms?tower_id=eq.$towerId&column_type=eq.$columnType&select=*&order=sort_order.asc")
+
+    suspend fun insertDWRoom(payload: JSONObject): Result<JSONArray> =
+        post("dw_rooms", payload.toString())
+
+    suspend fun updateDWRoom(id: Int, payload: JSONObject): Result<JSONArray> =
+        patch("dw_rooms?id=eq.$id", payload.toString())
+
+    suspend fun deleteDWRoom(id: Int): Result<Unit> = delete("dw_rooms?id=eq.$id")
+
+    // ── DW Room Types (junction) ────────────────────────────────────
+    suspend fun fetchDWRoomTypes(roomId: Int): Result<JSONArray> =
+        get("dw_room_types?room_id=eq.$roomId&select=*,dw_types(*)")
+
+    suspend fun insertDWRoomType(payload: JSONObject): Result<JSONArray> =
+        post("dw_room_types", payload.toString())
+
+    suspend fun deleteDWRoomType(roomId: Int, typeId: Int): Result<Unit> =
+        delete("dw_room_types?room_id=eq.$roomId&type_id=eq.$typeId")
+
+    /** Replace all type assignments for a room */
+    suspend fun replaceDWRoomTypes(roomId: Int, typeIds: List<Int>): Result<Unit> {
+        // Delete existing
+        delete("dw_room_types?room_id=eq.$roomId")
+        // Insert new
+        if (typeIds.isNotEmpty()) {
+            val arr = JSONArray()
+            typeIds.forEach { typeId ->
+                arr.put(JSONObject().apply {
+                    put("room_id", roomId)
+                    put("type_id", typeId)
+                })
+            }
+            post("dw_room_types", arr.toString(), prefer = "return=minimal,resolution=merge-duplicates")
+        }
+        return Result.success(Unit)
+    }
+
+    // ── DW Statuses ─────────────────────────────────────────────────
+    suspend fun fetchDWStatuses(roomId: Int): Result<JSONArray> =
+        get("dw_statuses?room_id=eq.$roomId&select=*")
+
+    suspend fun upsertDWStatuses(statuses: JSONArray): Result<JSONArray> =
+        post("dw_statuses", statuses.toString(), prefer = "return=minimal,resolution=merge-duplicates")
+
     // ── Core HTTP helpers ────────────────────────────────────────────
 
     private suspend fun get(path: String): Result<JSONArray> = withContext(Dispatchers.IO) {
