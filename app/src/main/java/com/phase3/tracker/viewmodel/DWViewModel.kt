@@ -604,7 +604,11 @@ class DWViewModel(application: Application) : AndroidViewModel(application) {
                                 }
 
                                 // Get or create room
-                                val roomId = existingRoomIds[roomName] ?: run {
+                                val existingId = existingRoomIds[roomName]
+                                val roomId: Int
+                                if (existingId != null) {
+                                    roomId = existingId
+                                } else {
                                     val payload = JSONObject().apply {
                                         put("tower_id", tower.id)
                                         put("column_type", colType)
@@ -612,8 +616,13 @@ class DWViewModel(application: Application) : AndroidViewModel(application) {
                                         put("sort_order", sortOrder)
                                     }
                                     val res = supabase.insertDWRoom(payload)
-                                    res.getOrNull()?.optJSONObject(0)?.optInt("id") ?: run { sortOrder++; return@run null }
-                                } ?: run { sortOrder++; continue }
+                                    val newId = res.getOrNull()?.optJSONObject(0)?.optInt("id")
+                                    if (newId == null) {
+                                        sortOrder++
+                                        continue
+                                    }
+                                    roomId = newId
+                                }
                                 sortOrder++
 
                                 supabase.replaceDWRoomTypes(roomId, typeIds)
