@@ -94,9 +94,35 @@ private val DarkColorScheme = darkColorScheme(
 @Composable
 fun Phase3Theme(
     darkTheme: Boolean = isSystemInDarkTheme(),
+    isOffline: Boolean = false,
     content: @Composable () -> Unit
 ) {
-    val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
+    val baseScheme = if (darkTheme) DarkColorScheme else LightColorScheme
+
+    // When offline, swap the primary tones from sea-green to grey
+    val colorScheme = if (isOffline) {
+        if (darkTheme) {
+            baseScheme.copy(
+                primary = OfflineGrey80,
+                onPrimary = OfflineGrey20,
+                primaryContainer = OfflineGrey30,
+                onPrimaryContainer = OfflineGrey90,
+                surfaceTint = OfflineGrey80,
+                inversePrimary = OfflineGrey40
+            )
+        } else {
+            baseScheme.copy(
+                primary = OfflineGrey40,
+                onPrimary = Color.White,
+                primaryContainer = OfflineGrey90,
+                onPrimaryContainer = OfflineGrey10,
+                surfaceTint = OfflineGrey40,
+                inversePrimary = OfflineGrey80
+            )
+        }
+    } else {
+        baseScheme
+    }
 
     val view = LocalView.current
     if (!view.isInEditMode) {
@@ -117,3 +143,4 @@ fun Phase3Theme(
         content = content
     )
 }
+

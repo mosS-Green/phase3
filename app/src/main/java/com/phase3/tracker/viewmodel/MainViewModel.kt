@@ -10,6 +10,7 @@ import android.provider.MediaStore
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.phase3.tracker.data.ExcelManager
+import com.phase3.tracker.data.ConnectivityObserver
 import com.phase3.tracker.data.SupabaseClient
 import com.phase3.tracker.model.Activity
 import com.phase3.tracker.model.FlatStatus
@@ -26,11 +27,15 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.InputStream
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val supabase = SupabaseClient()
     private val excelManager = ExcelManager()
+    private val connectivityObserver = ConnectivityObserver(application)
+
+    val isOnline: StateFlow<Boolean> = connectivityObserver.isOnline
 
     private val _towers = MutableStateFlow<List<Tower>>(emptyList())
     val towers: StateFlow<List<Tower>> = _towers.asStateFlow()
@@ -96,6 +101,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         loadFromSupabase()
+
+        // Auto-resync when connectivity returns
+        viewModelScope.launch {
+            var wasOffline = !connectivityObserver.isOnline.value
+            connectivityObserver.isOnline.collect { online ->
+                if (online && wasOffline) {
+                    // Just came back online — trigger a refresh
+                    _statusMessage.value = "Back online — syncing…"
+                    loadFromSupabase()
+                }
+                wasOffline = !online
+            }
+        }
     }
 
     // ── Data Loading ─────────────────────────────────────────────
@@ -103,6 +121,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun loadFromSupabase() {
         viewModelScope.launch {
             _isDownloading.value = true
+            val hadDataBefore = _towers.value.isNotEmpty()
             try {
                 val towersResult = supabase.fetchTowers()
                 val towerRows = towersResult.getOrThrow()
@@ -177,8 +196,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 _towers.value = towerList
+                // Only show the "synced" toast after a background refresh (not the initial load)
+                if (hadDataBefore) {
+                    _statusMessage.value = "Synced to latest ✓"
+                }
             } catch (e: Exception) {
-                _statusMessage.value = "Load failed: ${e.message}"
+                if (hadDataBefore) {
+                    _statusMessage.value = "Offline — showing cached data"
+                } else {
+                    _statusMessage.value = "Connection failed: ${e.message}"
+                }
             } finally {
                 _isDownloading.value = false
                 _isLoading.value = false
@@ -586,6 +613,88 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ── XLSX Import ──────────────────────────────────────────────
+
+    fun importActivitiesFromExcel(inputStream: InputStream) {
+        viewModelScope.launch {
+            _isDownloading.value = true
+            try {
+                withContext(Dispatchers.IO) {
+                    val parsed = excelManager.parseWorkbook(inputStream)
+
+                    // Build tower lookup by sheet name
+                    val towersBySheet = _towers.value.associateBy { it.sheetName }
+
+                    // Group parsed rows by sheet name
+                    val bySheet = parsed.groupBy { it.sheetName }
+
+                    for ((sheetName, rows) in bySheet) {
+                        val tower = towersBySheet[sheetName] ?: continue
+
+                        // Existing activities for this tower keyed by name
+                        val existingByName = tower.activities.associateBy { it.name.lowercase() }
+
+                        for (parsed in rows) {
+                            val isFloorBased = parsed.groupName.contains("Common", ignoreCase = true)
+                            val existing = existingByName[parsed.name.lowercase()]
+
+                            val activityId: Int
+                            if (existing != null) {
+                                // Update metadata
+                                val payload = JSONObject().apply {
+                                    put("name", parsed.name)
+                                    put("group_name", parsed.groupName)
+                                    put("contractor", parsed.contractor)
+                                    put("categories", Activity.serializeCategories(parsed.categories))
+                                    put("weightage", parsed.weightage)
+                                    put("use_percentage", parsed.usePercentage)
+                                    put("is_floor_based", isFloorBased)
+                                }
+                                supabase.updateActivity(existing.id, payload)
+                                activityId = existing.id
+                            } else {
+                                // Insert new activity
+                                val nextOrder = tower.activities.maxOfOrNull { it.sortOrder + 1 } ?: 0
+                                val payload = JSONObject().apply {
+                                    put("tower_id", tower.id)
+                                    put("name", parsed.name)
+                                    put("group_name", parsed.groupName)
+                                    put("contractor", parsed.contractor)
+                                    put("categories", Activity.serializeCategories(parsed.categories))
+                                    put("weightage", parsed.weightage)
+                                    put("use_percentage", parsed.usePercentage)
+                                    put("is_floor_based", isFloorBased)
+                                    put("sort_order", nextOrder)
+                                }
+                                val res = supabase.insertActivity(payload)
+                                activityId = res.getOrNull()?.optJSONObject(0)?.optInt("id") ?: continue
+                            }
+
+                            // Upsert flat statuses
+                            val flatArr = JSONArray()
+                            Activity.FLAT_NUMBERS.forEach { flatNum ->
+                                flatArr.put(JSONObject().apply {
+                                    put("activity_id", activityId)
+                                    put("flat_number", flatNum)
+                                    put("status", parsed.statuses[flatNum] ?: "empty")
+                                    put("percentage", parsed.percentages[flatNum] ?: 0)
+                                })
+                            }
+                            supabase.upsertFlatStatuses(flatArr)
+                        }
+                    }
+                }
+                // Reload fresh data
+                loadFromSupabase()
+                _statusMessage.value = "Imported successfully ✓"
+            } catch (e: Exception) {
+                _statusMessage.value = "Import failed: ${e.message}"
+            } finally {
+                _isDownloading.value = false
+            }
+        }
+    }
+
     // ── Filters ─────────────────────────────────────────────────
 
     fun toggleStatusFilter(filter: StatusFilter) {
@@ -637,5 +746,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearStatusMessage() {
         _statusMessage.value = null
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        connectivityObserver.unregister()
     }
 }

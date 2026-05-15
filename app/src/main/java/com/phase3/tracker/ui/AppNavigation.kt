@@ -12,6 +12,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -58,6 +59,7 @@ fun AppNavigation(viewModel: MainViewModel) {
     val isDownloading by viewModel.isDownloading.collectAsStateWithLifecycle()
     val isSyncing by viewModel.isSyncing.collectAsStateWithLifecycle()
     val syncDone by viewModel.syncDone.collectAsStateWithLifecycle()
+    val isOnline by viewModel.isOnline.collectAsStateWithLifecycle()
     val editMode by viewModel.editMode.collectAsStateWithLifecycle()
     val selectedStatusFilters by viewModel.selectedStatusFilters.collectAsStateWithLifecycle()
     val selectedCategories by viewModel.selectedCategories.collectAsStateWithLifecycle()
@@ -71,6 +73,8 @@ fun AppNavigation(viewModel: MainViewModel) {
 
     val context = LocalContext.current
 
+    val dwStatusMessage by dwViewModel.statusMessage.collectAsStateWithLifecycle()
+
     // File picker for DW Excel import
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -79,6 +83,19 @@ fun AppNavigation(viewModel: MainViewModel) {
             result.data?.data?.let { uri ->
                 context.contentResolver.openInputStream(uri)?.let { stream ->
                     dwViewModel.importFromExcel(stream, towers)
+                }
+            }
+        }
+    }
+
+    // File picker for Activities Excel import
+    val activityImportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            result.data?.data?.let { uri ->
+                context.contentResolver.openInputStream(uri)?.let { stream ->
+                    viewModel.importActivitiesFromExcel(stream)
                 }
             }
         }
@@ -101,6 +118,13 @@ fun AppNavigation(viewModel: MainViewModel) {
                     onNavigateToData = { navController.navigate(Screen.Data.route) },
                     onDownload = { viewModel.refreshFromSupabase() },
                     onSaveToDownloads = { viewModel.saveExcelToDownloads() },
+                    onImportActivities = {
+                        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                            addCategory(Intent.CATEGORY_OPENABLE)
+                            type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        }
+                        activityImportLauncher.launch(intent)
+                    },
                     onToggleStatusFilter = { viewModel.toggleStatusFilter(it) },
                     onToggleCategoryFilter = { viewModel.toggleCategoryFilter(it) },
                     onSetContractorFilter = { viewModel.setContractorFilter(it) },
@@ -216,6 +240,8 @@ fun AppNavigation(viewModel: MainViewModel) {
                         }
                         importLauncher.launch(intent)
                     },
+                    statusMessage = dwStatusMessage,
+                    onStatusDismiss = { dwViewModel.clearStatusMessage() },
                     onBack = { navController.popBackStack() }
                 )
             }
@@ -280,6 +306,7 @@ fun AppNavigation(viewModel: MainViewModel) {
             isSyncing = isSyncing || dwIsSyncing,
             syncDone = syncDone,
             isDownloading = isDownloading,
+            isOffline = !isOnline,
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .statusBarsPadding()
@@ -294,6 +321,7 @@ fun GlobalSyncIndicator(
     isSyncing: Boolean,
     syncDone: Boolean,
     isDownloading: Boolean,
+    isOffline: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "sync_rotation")
@@ -307,7 +335,7 @@ fun GlobalSyncIndicator(
         label = "rotation"
     )
 
-    val showIndicator = isSyncing || syncDone || isDownloading
+    val showIndicator = isSyncing || syncDone || isDownloading || isOffline
 
     AnimatedVisibility(
         visible = showIndicator,
@@ -323,6 +351,14 @@ fun GlobalSyncIndicator(
             contentAlignment = Alignment.Center
         ) {
             when {
+                isOffline -> {
+                    Icon(
+                        Icons.Default.WifiOff,
+                        contentDescription = "Offline",
+                        modifier = Modifier.size(18.dp),
+                        tint = com.phase3.tracker.ui.theme.OfflineRed
+                    )
+                }
                 isDownloading -> {
                     CircularProgressIndicator(
                         modifier = Modifier.size(18.dp),

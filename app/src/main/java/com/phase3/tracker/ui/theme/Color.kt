@@ -115,3 +115,13 @@ val PctLevel2Dark  = Color(0xFFE5B898)
 val PctLevel3Dark  = Color(0xFFF0DDA0)
 val PctLevel4Dark  = Color(0xFFC0D0A8)
 val PctLevel5Dark  = Color(0xFFB4CCA9)
+
+// ── Offline grey palette (replaces sea green when offline) ───────────
+val OfflineGrey40   = Color(0xFF757575)
+val OfflineGrey80   = Color(0xFFBDBDBD)
+val OfflineGrey90   = Color(0xFFE0E0E0)
+val OfflineGrey10   = Color(0xFF212121)
+val OfflineGrey20   = Color(0xFF424242)
+val OfflineGrey30   = Color(0xFF616161)
+val OfflineRed      = Color(0xFFE53935)
+

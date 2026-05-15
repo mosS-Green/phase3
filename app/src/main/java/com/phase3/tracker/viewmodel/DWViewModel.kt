@@ -22,6 +22,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.apache.poi.ss.usermodel.BorderStyle
+import org.apache.poi.ss.usermodel.FillPatternType
+import org.apache.poi.ss.usermodel.HorizontalAlignment
+import org.apache.poi.ss.usermodel.IndexedColors
+import org.apache.poi.xssf.usermodel.XSSFCellStyle
+import org.apache.poi.xssf.usermodel.XSSFColor
 import org.apache.poi.xssf.usermodel.XSSFWorkbook
 import org.json.JSONArray
 import org.json.JSONObject
@@ -327,158 +333,323 @@ class DWViewModel(application: Application) : AndroidViewModel(application) {
 
     // ── Excel Export ─────────────────────────────────────────────
 
-    fun exportToExcel(towers: List<Tower>): Uri? {
+    /** Colour helpers for DW workbook */
+    private fun dwHeaderStyle(wb: XSSFWorkbook): XSSFCellStyle {
+        val font = wb.createFont()
+        font.bold = true
+        (font as org.apache.poi.xssf.usermodel.XSSFFont).color = IndexedColors.WHITE.index
+        font.fontHeightInPoints = 10
+        val style = wb.createCellStyle() as XSSFCellStyle
+        style.setFont(font)
+        style.setFillForegroundColor(XSSFColor(byteArrayOf(0x37.toByte(), 0x47.toByte(), 0x4F.toByte()), null)) // blue-grey
+        style.fillPattern = FillPatternType.SOLID_FOREGROUND
+        style.alignment = HorizontalAlignment.CENTER
+        style.setBorderBottom(BorderStyle.THIN)
+        return style
+    }
+
+    private fun dwDoneStyle(wb: XSSFWorkbook): XSSFCellStyle {
+        val style = wb.createCellStyle() as XSSFCellStyle
+        style.setFillForegroundColor(XSSFColor(byteArrayOf(0x81.toByte(), 0xC7.toByte(), 0x84.toByte()), null))
+        style.fillPattern = FillPatternType.SOLID_FOREGROUND
+        style.alignment = HorizontalAlignment.CENTER
+        return style
+    }
+
+    private fun dwStripeStyle(wb: XSSFWorkbook): XSSFCellStyle {
+        val style = wb.createCellStyle() as XSSFCellStyle
+        style.setFillForegroundColor(XSSFColor(byteArrayOf(0xF5.toByte(), 0xF5.toByte(), 0xF5.toByte()), null))
+        style.fillPattern = FillPatternType.SOLID_FOREGROUND
+        return style
+    }
+
+    fun exportToExcel(towers: List<Tower>) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            try {
+                val uri = withContext(Dispatchers.IO) { buildDWWorkbook(towers) }
+                _statusMessage.value = if (uri != null) "DW export saved to Downloads" else "Export failed"
+            } catch (e: Exception) {
+                _statusMessage.value = "Export failed: ${e.message}"
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private suspend fun buildDWWorkbook(towers: List<Tower>): Uri? {
         val app = getApplication<Application>()
-        try {
-            val wb = XSSFWorkbook()
-            val types = _dwTypes.value
+        val wb = XSSFWorkbook()
+        val hdrStyle  = dwHeaderStyle(wb)
+        val doneStyle = dwDoneStyle(wb)
+        val stripeStyle = dwStripeStyle(wb)
 
-            for (tower in towers) {
-                for (colType in listOf("frame", "shutter", "glass")) {
-                    val sheetName = "${tower.sheetName}_${colType.replaceFirstChar { it.uppercase() }}"
-                    val sheet = wb.createSheet(sheetName)
+        for (tower in towers) {
+            for (colType in listOf("frame", "shutter", "glass")) {
+                val sheetName = "${tower.sheetName}_${colType.replaceFirstChar { it.uppercase() }}"
+                val sheet = wb.createSheet(sheetName)
 
-                    // Load rooms synchronously (we're already in a coroutine context from caller)
-                    // For export we use the currently loaded rooms if they match, otherwise skip
-                    val rooms = _rooms.value.filter {
-                        it.towerId == tower.id && it.columnType == colType
+                // Fetch rooms for this tower+column from Supabase
+                val roomRows = supabase.fetchDWRooms(tower.id, colType).getOrElse { JSONArray() }
+                val rooms = mutableListOf<Triple<Int, String, List<DWType>>>()
+                for (i in 0 until roomRows.length()) {
+                    val r = roomRows.getJSONObject(i)
+                    val roomId = r.getInt("id")
+                    val roomName = r.getString("name")
+                    val rtRows = supabase.fetchDWRoomTypes(roomId).getOrElse { JSONArray() }
+                    val types = mutableListOf<DWType>()
+                    for (j in 0 until rtRows.length()) {
+                        val rt = rtRows.getJSONObject(j)
+                        val t = rt.optJSONObject("dw_types") ?: continue
+                        types.add(DWType(
+                            id = t.getInt("id"),
+                            name = t.getString("name"),
+                            kind = t.getString("kind"),
+                            height = t.optDouble("height", 0.0),
+                            breadth = t.optDouble("breadth", 0.0)
+                        ))
+                    }
+                    rooms.add(Triple(roomId, roomName, types))
+                }
+
+                // Header: Tower | Flat No. | Room Name | Type Name | D or W | B | H | Status
+                val headerRow = sheet.createRow(0)
+                listOf("Tower", "Flat No.", "Room Name", "Type Name", "D or W", "B", "H", "Status")
+                    .forEachIndexed { i, title ->
+                        headerRow.createCell(i).apply {
+                            setCellValue(title)
+                            cellStyle = hdrStyle
+                        }
                     }
 
-                    // Header row: Room | Type | Kind | Flat 201 | Flat 202 | ...
-                    val headerRow = sheet.createRow(0)
-                    headerRow.createCell(0).setCellValue("Room")
-                    headerRow.createCell(1).setCellValue("Type")
-                    headerRow.createCell(2).setCellValue("Kind")
-                    headerRow.createCell(3).setCellValue("H")
-                    headerRow.createCell(4).setCellValue("B")
-                    Activity.FLAT_NUMBERS.forEachIndexed { idx, flatNum ->
-                        headerRow.createCell(5 + idx).setCellValue(flatNum.toDouble())
-                    }
+                // Column widths
+                sheet.setColumnWidth(0, 20 * 256) // Tower
+                sheet.setColumnWidth(1, 10 * 256) // Flat No.
+                sheet.setColumnWidth(2, 25 * 256) // Room Name
+                sheet.setColumnWidth(3, 30 * 256) // Type Name
+                sheet.setColumnWidth(4,  8 * 256) // D or W
+                sheet.setColumnWidth(5,  8 * 256) // B
+                sheet.setColumnWidth(6,  8 * 256) // H
+                sheet.setColumnWidth(7, 12 * 256) // Status
 
-                    var rowIdx = 1
-                    for (room in rooms) {
-                        for (type in room.types) {
+                sheet.createFreezePane(0, 1)
+
+                // Fetch all statuses per room up front
+                val roomStatuses = mutableMapOf<Int, Map<Int, Map<Int, Boolean>>>() // roomId -> flatNum -> typeId -> isDone
+                for ((roomId, _, _) in rooms) {
+                    val stRows = supabase.fetchDWStatuses(roomId).getOrElse { JSONArray() }
+                    val flatMap = mutableMapOf<Int, MutableMap<Int, Boolean>>()
+                    for (j in 0 until stRows.length()) {
+                        val s = stRows.getJSONObject(j)
+                        val flatNum = s.getInt("flat_number")
+                        val typeId  = s.getInt("type_id")
+                        val isDone  = s.getBoolean("is_done")
+                        flatMap.getOrPut(flatNum) { mutableMapOf() }[typeId] = isDone
+                    }
+                    roomStatuses[roomId] = flatMap
+                }
+
+                // Write tall rows: one per flat × room × type
+                var rowIdx = 1
+                var lastFlat = -1
+                var useStripe = false
+                for (flatNum in Activity.FLAT_NUMBERS) {
+                    if (flatNum != lastFlat) { useStripe = !useStripe; lastFlat = flatNum }
+                    for ((roomId, roomName, types) in rooms) {
+                        val flatStatuses = roomStatuses[roomId] ?: emptyMap()
+                        for (type in types) {
+                            val isDone = flatStatuses[flatNum]?.get(type.id) ?: false
                             val row = sheet.createRow(rowIdx++)
-                            row.createCell(0).setCellValue(room.name)
-                            row.createCell(1).setCellValue(type.name)
-                            row.createCell(2).setCellValue(type.kind)
-                            row.createCell(3).setCellValue(type.height)
-                            row.createCell(4).setCellValue(type.breadth)
-                            Activity.FLAT_NUMBERS.forEachIndexed { idx, flatNum ->
-                                val isDone = room.flatStatuses[flatNum]?.get(type.id) ?: false
-                                row.createCell(5 + idx).setCellValue(if (isDone) "Y" else "")
+                            val rowStyle = if (useStripe) stripeStyle else null
+
+                            row.createCell(0).also {
+                                it.setCellValue(tower.name)
+                                if (rowStyle != null) it.cellStyle = rowStyle
+                            }
+                            row.createCell(1).also {
+                                it.setCellValue(flatNum.toDouble())
+                                if (rowStyle != null) it.cellStyle = rowStyle
+                            }
+                            row.createCell(2).also {
+                                it.setCellValue(roomName)
+                                if (rowStyle != null) it.cellStyle = rowStyle
+                            }
+                            row.createCell(3).also {
+                                it.setCellValue(type.name)
+                                if (rowStyle != null) it.cellStyle = rowStyle
+                            }
+                            row.createCell(4).also {
+                                it.setCellValue(if (type.isDoor) "D" else "W")
+                                if (rowStyle != null) it.cellStyle = rowStyle
+                            }
+                            row.createCell(5).also {
+                                it.setCellValue(type.breadth)
+                                if (rowStyle != null) it.cellStyle = rowStyle
+                            }
+                            row.createCell(6).also {
+                                it.setCellValue(type.height)
+                                if (rowStyle != null) it.cellStyle = rowStyle
+                            }
+                            row.createCell(7).also {
+                                if (isDone) {
+                                    it.setCellValue("Y")
+                                    it.cellStyle = doneStyle
+                                } else if (rowStyle != null) {
+                                    it.cellStyle = rowStyle
+                                }
                             }
                         }
                     }
                 }
             }
+        }
 
-            val fileName = "Phase3_DW_${System.currentTimeMillis()}.xlsx"
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val cv = ContentValues().apply {
-                    put(MediaStore.Downloads.DISPLAY_NAME, fileName)
-                    put(MediaStore.Downloads.MIME_TYPE, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-                    put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
-                }
-                val uri = app.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv)
-                uri?.let { app.contentResolver.openOutputStream(it)?.use { out -> wb.write(out) } }
-                wb.close()
-                _statusMessage.value = "Exported: $fileName"
-                return uri
-            } else {
-                @Suppress("DEPRECATION")
-                val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                val file = File(dir, fileName)
-                file.outputStream().use { wb.write(it) }
-                wb.close()
-                _statusMessage.value = "Exported: $fileName"
-                return Uri.fromFile(file)
+        val fileName = "Phase3_DW_${System.currentTimeMillis()}.xlsx"
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val cv = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                put(MediaStore.Downloads.MIME_TYPE, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
             }
-        } catch (e: Exception) {
-            _statusMessage.value = "Export failed: ${e.message}"
-            return null
+            val uri = app.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv)
+            uri?.let { app.contentResolver.openOutputStream(it)?.use { out -> wb.write(out) } }
+            wb.close()
+            uri
+        } else {
+            val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val file = File(dir, fileName)
+            file.outputStream().use { wb.write(it) }
+            wb.close()
+            Uri.fromFile(file)
         }
     }
 
     // ── Excel Import ─────────────────────────────────────────────
 
+    /**
+     * Parse the tall-format DW export:
+     *   Tower | Flat No. | Room Name | Type Name | D or W | B | H | Status
+     * and upsert everything to Supabase.
+     */
     fun importFromExcel(inputStream: InputStream, towers: List<Tower>) {
         viewModelScope.launch {
             _isLoading.value = true
             try {
                 withContext(Dispatchers.IO) {
                     val wb = XSSFWorkbook(inputStream)
-                    val allTypes = _dwTypes.value.associateBy { it.name }
 
                     for (tower in towers) {
                         for (colType in listOf("frame", "shutter", "glass")) {
                             val sheetName = "${tower.sheetName}_${colType.replaceFirstChar { it.uppercase() }}"
                             val sheet = wb.getSheet(sheetName) ?: continue
 
-                            // Read header to get flat number mapping
-                            val headerRow = sheet.getRow(0) ?: continue
-                            val flatCols = mutableMapOf<Int, Int>() // colIdx -> flatNumber
-                            for (c in 5 until headerRow.lastCellNum) {
-                                val cell = headerRow.getCell(c) ?: continue
-                                val flatNum = cell.numericCellValue.toInt()
-                                flatCols[c] = flatNum
-                            }
+                            // key: roomName -> list of (typeName, kind, breadth, height, flatNum, isDone)
+                            data class DWRow(val typeName: String, val kind: String, val breadth: Double, val height: Double, val flatNum: Int, val isDone: Boolean)
+                            val roomRows = mutableMapOf<String, MutableList<DWRow>>()
 
-                            // Group data rows by room name
-                            val roomData = mutableMapOf<String, MutableList<Triple<DWType, Map<Int, Boolean>, Int>>>()
                             for (r in 1..sheet.lastRowNum) {
                                 val row = sheet.getRow(r) ?: continue
-                                val roomName = row.getCell(0)?.stringCellValue?.trim() ?: continue
-                                val typeName = row.getCell(1)?.stringCellValue?.trim() ?: continue
-                                val type = allTypes[typeName] ?: continue
+                                // cols: 0=Tower, 1=FlatNo, 2=RoomName, 3=TypeName, 4=D/W, 5=B, 6=H, 7=Status
+                                val roomName = row.getCell(2)?.stringCellValue?.trim()?.takeIf { it.isNotBlank() } ?: continue
+                                val typeName = row.getCell(3)?.stringCellValue?.trim()?.takeIf { it.isNotBlank() } ?: continue
+                                val kindRaw  = row.getCell(4)?.stringCellValue?.trim()?.uppercase() ?: "W"
+                                val kind     = if (kindRaw == "D") "door" else "window"
+                                val breadth  = try { row.getCell(5)?.numericCellValue ?: 0.0 } catch (_: Exception) { 0.0 }
+                                val height   = try { row.getCell(6)?.numericCellValue ?: 0.0 } catch (_: Exception) { 0.0 }
+                                val flatNum  = try { row.getCell(1)?.numericCellValue?.toInt() ?: continue } catch (_: Exception) { continue }
+                                val statusRaw = try { row.getCell(7)?.stringCellValue?.trim() ?: "" } catch (_: Exception) { "" }
+                                val isDone   = statusRaw.equals("Y", ignoreCase = true)
 
-                                val statuses = mutableMapOf<Int, Boolean>()
-                                flatCols.forEach { (colIdx, flatNum) ->
-                                    val cellVal = row.getCell(colIdx)?.stringCellValue?.trim() ?: ""
-                                    statuses[flatNum] = cellVal.equals("Y", ignoreCase = true)
-                                }
-
-                                roomData.getOrPut(roomName) { mutableListOf() }
-                                    .add(Triple(type, statuses, 0))
+                                roomRows.getOrPut(roomName) { mutableListOf() }
+                                    .add(DWRow(typeName, kind, breadth, height, flatNum, isDone))
                             }
 
-                            // Create rooms + statuses
-                            var sortOrder = 0
-                            for ((roomName, entries) in roomData) {
-                                val typeIds = entries.map { it.first.id }
-                                val payload = JSONObject().apply {
-                                    put("tower_id", tower.id)
-                                    put("column_type", colType)
-                                    put("name", roomName)
-                                    put("sort_order", sortOrder++)
+                            // Load existing rooms for this tower+column to avoid duplicates
+                            val existingRoomRows = supabase.fetchDWRooms(tower.id, colType).getOrElse { JSONArray() }
+                            val existingRoomIds = mutableMapOf<String, Int>() // roomName -> id
+                            for (i in 0 until existingRoomRows.length()) {
+                                val o = existingRoomRows.getJSONObject(i)
+                                existingRoomIds[o.getString("name")] = o.getInt("id")
+                            }
+
+                            // Load/create DW types catalog
+                            val typesCatalog = _dwTypes.value.associateBy { it.name }.toMutableMap()
+
+                            var sortOrder = existingRoomRows.length()
+                            for ((roomName, entries) in roomRows) {
+                                // Collect unique types in this room
+                                val uniqueTypes = entries.map { Triple(it.typeName, it.kind, it.breadth to it.height) }
+                                    .distinctBy { it.first }
+
+                                // Ensure each DWType exists in catalog
+                                val typeIds = mutableListOf<Int>()
+                                for ((tName, tKind, dims) in uniqueTypes) {
+                                    val existing = typesCatalog[tName]
+                                    if (existing != null) {
+                                        typeIds.add(existing.id)
+                                    } else {
+                                        val payload = JSONObject().apply {
+                                            put("name", tName)
+                                            put("kind", tKind)
+                                            put("height", dims.second)
+                                            put("breadth", dims.first)
+                                        }
+                                        val res = supabase.insertDWType(payload)
+                                        val newId = res.getOrNull()?.optJSONObject(0)?.optInt("id") ?: continue
+                                        val newType = DWType(id = newId, name = tName, kind = tKind, height = dims.second, breadth = dims.first)
+                                        typesCatalog[tName] = newType
+                                        typeIds.add(newId)
+                                    }
                                 }
 
-                                // Upsert room
-                                val result = supabase.insertDWRoom(payload)
-                                val roomRow = result.getOrNull()?.optJSONObject(0) ?: continue
-                                val roomId = roomRow.getInt("id")
+                                // Get or create room
+                                val roomId = existingRoomIds[roomName] ?: run {
+                                    val payload = JSONObject().apply {
+                                        put("tower_id", tower.id)
+                                        put("column_type", colType)
+                                        put("name", roomName)
+                                        put("sort_order", sortOrder)
+                                    }
+                                    val res = supabase.insertDWRoom(payload)
+                                    res.getOrNull()?.optJSONObject(0)?.optInt("id") ?: run { sortOrder++; return@run null }
+                                } ?: run { sortOrder++; continue }
+                                sortOrder++
 
                                 supabase.replaceDWRoomTypes(roomId, typeIds)
 
                                 // Upsert statuses
                                 val statusArr = JSONArray()
-                                for ((type, statuses, _) in entries) {
-                                    statuses.forEach { (flatNum, isDone) ->
-                                        statusArr.put(JSONObject().apply {
-                                            put("room_id", roomId)
-                                            put("type_id", type.id)
-                                            put("flat_number", flatNum)
-                                            put("is_done", isDone)
-                                        })
-                                    }
+                                for (entry in entries) {
+                                    val typeId = typesCatalog[entry.typeName]?.id ?: continue
+                                    statusArr.put(JSONObject().apply {
+                                        put("room_id", roomId)
+                                        put("type_id", typeId)
+                                        put("flat_number", entry.flatNum)
+                                        put("is_done", entry.isDone)
+                                    })
                                 }
                                 if (statusArr.length() > 0) supabase.upsertDWStatuses(statusArr)
                             }
                         }
                     }
                     wb.close()
+                    // Refresh types list after possible new types were created
+                    val refreshed = supabase.fetchDWTypes().getOrElse { JSONArray() }
+                    val types = mutableListOf<DWType>()
+                    for (i in 0 until refreshed.length()) {
+                        val o = refreshed.getJSONObject(i)
+                        types.add(DWType(
+                            id = o.getInt("id"),
+                            name = o.getString("name"),
+                            kind = o.getString("kind"),
+                            height = o.optDouble("height", 0.0),
+                            breadth = o.optDouble("breadth", 0.0)
+                        ))
+                    }
+                    _dwTypes.value = types
                 }
-                _statusMessage.value = "Import complete"
+                _statusMessage.value = "Imported successfully ✓"
             } catch (e: Exception) {
                 _statusMessage.value = "Import failed: ${e.message}"
             } finally {

@@ -41,6 +41,7 @@ fun HomeScreen(
     onNavigateToData: () -> Unit,
     onDownload: () -> Unit,
     onSaveToDownloads: () -> Unit,
+    onImportActivities: () -> Unit,
     onToggleStatusFilter: (MainViewModel.StatusFilter) -> Unit,
     onToggleCategoryFilter: (String) -> Unit,
     onSetContractorFilter: (String) -> Unit,
@@ -391,6 +392,14 @@ fun HomeScreen(
                         Icon(
                             Icons.Default.Save,
                             contentDescription = "Save XLSX to Downloads",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    // ── Import XLSX ──────────────────────────────
+                    IconButton(onClick = onImportActivities) {
+                        Icon(
+                            Icons.Default.FileOpen,
+                            contentDescription = "Import XLSX from file",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }

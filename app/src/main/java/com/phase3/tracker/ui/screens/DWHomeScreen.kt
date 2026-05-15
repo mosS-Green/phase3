@@ -31,11 +31,21 @@ fun DWHomeScreen(
     onDeleteType: (id: Int) -> Unit,
     onExportExcel: () -> Unit,
     onImportExcel: () -> Unit,
+    statusMessage: String?,
+    onStatusDismiss: () -> Unit,
     onBack: () -> Unit
 ) {
     var showTypesSheet by remember { mutableStateOf(false) }
     var showAddTypeDialog by remember { mutableStateOf(false) }
     var editingType by remember { mutableStateOf<DWType?>(null) }
+
+    val snackbarHostState = remember { SnackbarHostState() }
+    LaunchedEffect(statusMessage) {
+        if (!statusMessage.isNullOrBlank()) {
+            snackbarHostState.showSnackbar(statusMessage)
+            onStatusDismiss()
+        }
+    }
 
     // Types management bottom sheet
     if (showTypesSheet) {
@@ -178,6 +188,7 @@ fun DWHomeScreen(
                 )
             )
         },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         containerColor = MaterialTheme.colorScheme.surface
     ) { padding ->
         Column(
