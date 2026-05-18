@@ -115,6 +115,7 @@ fun AppNavigation(viewModel: MainViewModel) {
                     selectedContractor = selectedContractor,
                     allContractors = viewModel.getAllContractors(),
                     allGroupNames = viewModel.getAllGroupNames(),
+                    allCategories = viewModel.getAllCategories(),
                     onNavigateToData = { navController.navigate(Screen.Data.route) },
                     onDownload = { viewModel.refreshFromSupabase() },
                     onSaveToDownloads = { viewModel.saveExcelToDownloads() },
@@ -172,6 +173,7 @@ fun AppNavigation(viewModel: MainViewModel) {
                         activities = tower.activities,
                         editMode = editMode,
                         allGroupNames = viewModel.getAllGroupNames(),
+                        allCategories = viewModel.getAllCategories(),
                         onActivityClick = { activityIndex ->
                             navController.navigate(Screen.Activity.createRoute(towerIndex, activityIndex))
                         },

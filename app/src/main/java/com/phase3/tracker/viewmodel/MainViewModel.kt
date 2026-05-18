@@ -686,7 +686,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 // Reload fresh data
                 loadFromSupabase()
-                _statusMessage.value = "Imported successfully ✓"
+                _statusMessage.value = "Imported and upsynced succesfully"
             } catch (e: Exception) {
                 _statusMessage.value = "Import failed: ${e.message}"
             } finally {
@@ -722,6 +722,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val fromData = _towers.value.flatMap { it.activities }.map { it.groupName }
             .filter { it.isNotBlank() }.distinct()
         val defaults = Activity.DEFAULT_GROUP_NAMES
+        return (fromData + defaults).distinct().sorted()
+    }
+
+    fun getAllCategories(): List<String> {
+        val fromData = _towers.value.flatMap { it.activities }.flatMap { it.categories }
+            .filter { it.isNotBlank() }.distinct()
+        val defaults = Activity.VALID_CATEGORIES
         return (fromData + defaults).distinct().sorted()
     }
 

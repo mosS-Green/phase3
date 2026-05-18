@@ -658,7 +658,7 @@ class DWViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     _dwTypes.value = types
                 }
-                _statusMessage.value = "Imported successfully ✓"
+                _statusMessage.value = "Imported and upsynced succesfully"
             } catch (e: Exception) {
                 _statusMessage.value = "Import failed: ${e.message}"
             } finally {

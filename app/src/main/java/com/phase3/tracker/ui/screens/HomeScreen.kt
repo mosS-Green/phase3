@@ -38,6 +38,7 @@ fun HomeScreen(
     selectedContractor: String,
     allContractors: List<String>,
     allGroupNames: List<String>,
+    allCategories: List<String>,
     onNavigateToData: () -> Unit,
     onDownload: () -> Unit,
     onSaveToDownloads: () -> Unit,
@@ -145,6 +146,7 @@ fun HomeScreen(
             groupName = addGroupName,
             onGroupNameChange = { addGroupName = it },
             allGroupNames = allGroupNames,
+            allCategories = allCategories,
             usePercentage = addUsePercentage,
             onUsePercentageChange = { addUsePercentage = it },
             weightage = addWeightage,
@@ -195,6 +197,7 @@ fun HomeScreen(
             groupName = renameGroupName,
             onGroupNameChange = { renameGroupName = it },
             allGroupNames = allGroupNames,
+            allCategories = allCategories,
             usePercentage = renameUsePercentage,
             onUsePercentageChange = { renameUsePercentage = it },
             weightage = renameWeightage,
@@ -308,7 +311,7 @@ fun HomeScreen(
                             expanded = showCategoryFilterMenu,
                             onDismissRequest = { showCategoryFilterMenu = false }
                         ) {
-                            Activity.VALID_CATEGORIES.forEach { category ->
+                            allCategories.forEach { category ->
                                 DropdownMenuItem(
                                     text = {
                                         Row(

@@ -34,6 +34,7 @@ fun ActivityFormDialog(
     groupName: String,
     onGroupNameChange: (String) -> Unit,
     allGroupNames: List<String>,
+    allCategories: List<String> = Activity.VALID_CATEGORIES,
     usePercentage: Boolean,
     onUsePercentageChange: (Boolean) -> Unit,
     weightage: Int,
@@ -243,7 +244,7 @@ fun ActivityFormDialog(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Activity.VALID_CATEGORIES.forEach { cat ->
+                    allCategories.forEach { cat ->
                         val isSelected = cat in categories
                         FilterChip(
                             selected = isSelected,
