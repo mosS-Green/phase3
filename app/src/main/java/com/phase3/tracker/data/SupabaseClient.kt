@@ -93,6 +93,9 @@ class SupabaseClient {
     suspend fun fetchDWRooms(towerId: Int, columnType: String): Result<JSONArray> =
         get("dw_rooms?tower_id=eq.$towerId&column_type=eq.$columnType&select=*&order=sort_order.asc")
 
+    suspend fun fetchAllDWRooms(towerId: Int): Result<JSONArray> =
+        get("dw_rooms?tower_id=eq.$towerId&select=*&order=sort_order.asc")
+
     suspend fun insertDWRoom(payload: JSONObject): Result<JSONArray> =
         post("dw_rooms", payload.toString())
 

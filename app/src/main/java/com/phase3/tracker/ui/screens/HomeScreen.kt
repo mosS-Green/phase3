@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -54,7 +55,7 @@ fun HomeScreen(
     onDeleteActivity: (towerIndex: Int, activityIndex: Int) -> Unit,
     getFilteredActivities: (Tower) -> List<Activity>
 ) {
-    var selectedTowerIndex by remember { mutableIntStateOf(0) }
+    var selectedTowerIndex by rememberSaveable { mutableIntStateOf(0) }
     var showStatusFilterMenu by remember { mutableStateOf(false) }
     var showCategoryFilterMenu by remember { mutableStateOf(false) }
     var showContractorFilterMenu by remember { mutableStateOf(false) }
