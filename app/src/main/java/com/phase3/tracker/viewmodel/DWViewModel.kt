@@ -680,6 +680,14 @@ class DWViewModel(application: Application) : AndroidViewModel(application) {
                             }
 
                             var sortOrder = existingRoomRows.length()
+                            
+                            // Delete any existing rooms that are no longer in the Excel file
+                            for ((existingName, existingId) in existingRoomIds) {
+                                if (!roomRows.containsKey(existingName)) {
+                                    supabase.deleteDWRoom(existingId)
+                                }
+                            }
+                            
                             for ((roomName, entries) in roomRows) {
                                 // Collect unique types in this room
                                 val uniqueTypes = entries.map { Triple(it.typeName, it.kind, it.breadth to it.height) }
@@ -729,6 +737,9 @@ class DWViewModel(application: Application) : AndroidViewModel(application) {
                                 sortOrder++
 
                                 supabase.replaceDWRoomTypes(roomId, typeIds)
+
+                                // Delete old statuses for this room to ensure removed combinations are cleared
+                                supabase.deleteDWStatusesForRoom(roomId)
 
                                 // Upsert statuses
                                 val statusArr = JSONArray()

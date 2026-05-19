@@ -136,6 +136,9 @@ class SupabaseClient {
     suspend fun fetchDWStatuses(roomId: Int): Result<JSONArray> =
         get("dw_statuses?room_id=eq.$roomId&select=*")
 
+    suspend fun deleteDWStatusesForRoom(roomId: Int): Result<Unit> =
+        delete("dw_statuses?room_id=eq.$roomId")
+
     suspend fun upsertDWStatuses(statuses: JSONArray): Result<JSONArray> =
         post("dw_statuses", statuses.toString(), prefer = "return=minimal,resolution=merge-duplicates")
 
