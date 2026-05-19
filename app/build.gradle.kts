@@ -12,8 +12,8 @@ android {
         applicationId = "com.phase3.tracker"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "2.0.0"
+        versionCode = 3
+        versionName = "3.0.0"
         buildConfigField("String", "BOT_TOKEN", "\"${System.getenv("BOT_TOKEN") ?: ""}\"")
         buildConfigField("String", "CHAT_ID", "\"${System.getenv("CHAT_ID") ?: ""}\"")
         buildConfigField("String", "SUPABASE_URL", "\"${System.getenv("SUPABASE_URL") ?: ""}\"")

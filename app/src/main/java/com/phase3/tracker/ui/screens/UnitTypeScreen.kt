@@ -62,9 +62,9 @@ fun UnitTypeScreen(
 
     val isDark = isSystemInDarkTheme()
 
-    // Build columns: unique (roomName, typeName) combos across all column types
-    val columns = remember(allTowerRooms) {
-        buildRoomTypeColumns(allTowerRooms)
+    // Build columns: unique (roomName, typeName) combos for this unit's flats
+    val columns = remember(allTowerRooms, unitDigit) {
+        buildRoomTypeColumns(allTowerRooms, unitDigit)
     }
 
     // Color coding for the cycling state
@@ -376,11 +376,14 @@ private fun onCellClick(
 }
 
 /**
- * Build the column list from allTowerRooms.
+ * Build the column list from allTowerRooms, filtered to only include
+ * room+type combos that have status entries for the given unit digit's flats.
  * Each unique (roomName, typeId) across all column types becomes one column.
  */
-private fun buildRoomTypeColumns(allTowerRooms: Map<String, List<DWRoom>>): List<RoomTypeColumn> {
-    // Collect all unique (roomName, typeId) combos
+private fun buildRoomTypeColumns(allTowerRooms: Map<String, List<DWRoom>>, unitDigit: Int): List<RoomTypeColumn> {
+    // All flat numbers for this unit digit (e.g. digit 1 → 201, 301, ..., 3401)
+    val unitFlats = Activity.FLAT_NUMBERS.filter { it % 100 == unitDigit }.toSet()
+
     data class Key(val roomName: String, val typeId: Int)
 
     val typeMap = mutableMapOf<Int, DWType>()
@@ -389,6 +392,13 @@ private fun buildRoomTypeColumns(allTowerRooms: Map<String, List<DWRoom>>): List
     for ((colType, rooms) in allTowerRooms) {
         for (room in rooms) {
             for (type in room.types) {
+                // Only include this room+type if there's at least one flat status
+                // for any of this unit's flats
+                val hasStatus = unitFlats.any { flatNum ->
+                    room.flatStatuses[flatNum]?.containsKey(type.id) == true
+                }
+                if (!hasStatus) continue
+
                 typeMap[type.id] = type
                 val key = Key(room.name, type.id)
                 roomIdMap.getOrPut(key) { mutableMapOf() }[colType] = room.id

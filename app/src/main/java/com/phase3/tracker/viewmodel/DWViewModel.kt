@@ -338,6 +338,38 @@ class DWViewModel(application: Application) : AndroidViewModel(application) {
         return flats.map { flatColumnCompletion(it) }.average().toFloat()
     }
 
+    // ── Cell-reading helpers (handles any cell type) ─────────────
+
+    private fun cellString(cell: org.apache.poi.ss.usermodel.Cell?): String? {
+        if (cell == null) return null
+        return try {
+            when (cell.cellType) {
+                org.apache.poi.ss.usermodel.CellType.STRING -> cell.stringCellValue?.trim()
+                org.apache.poi.ss.usermodel.CellType.NUMERIC -> {
+                    val v = cell.numericCellValue
+                    if (v == v.toLong().toDouble()) v.toLong().toString() else v.toString()
+                }
+                org.apache.poi.ss.usermodel.CellType.BOOLEAN -> cell.booleanCellValue.toString()
+                org.apache.poi.ss.usermodel.CellType.FORMULA -> try { cell.stringCellValue?.trim() } catch (_: Exception) {
+                    try { cell.numericCellValue.toString() } catch (_: Exception) { null }
+                }
+                else -> null
+            }
+        } catch (_: Exception) { null }
+    }
+
+    private fun cellDouble(cell: org.apache.poi.ss.usermodel.Cell?): Double {
+        if (cell == null) return 0.0
+        return try {
+            when (cell.cellType) {
+                org.apache.poi.ss.usermodel.CellType.NUMERIC -> cell.numericCellValue
+                org.apache.poi.ss.usermodel.CellType.STRING -> cell.stringCellValue?.trim()?.toDoubleOrNull() ?: 0.0
+                org.apache.poi.ss.usermodel.CellType.FORMULA -> try { cell.numericCellValue } catch (_: Exception) { 0.0 }
+                else -> 0.0
+            }
+        } catch (_: Exception) { 0.0 }
+    }
+
     // ── Excel Export ─────────────────────────────────────────────
 
     /** Colour helpers for DW workbook */
@@ -504,7 +536,7 @@ class DWViewModel(application: Application) : AndroidViewModel(application) {
                         val rowStyle = if (useStripe) stripeStyle else null
 
                         row.createCell(0).also {
-                            it.setCellValue(tower.name)
+                            it.setCellValue(tower.name.filter { c -> c.isDigit() }.toDouble())
                             if (rowStyle != null) it.cellStyle = rowStyle
                         }
                         row.createCell(1).also {
@@ -535,7 +567,7 @@ class DWViewModel(application: Application) : AndroidViewModel(application) {
                         // FRAME status
                         row.createCell(7).also {
                             if (frameDone) {
-                                it.setCellValue("Y")
+                                it.setCellValue("C")
                                 it.cellStyle = doneStyle
                             } else if (rowStyle != null) {
                                 it.cellStyle = rowStyle
@@ -545,7 +577,7 @@ class DWViewModel(application: Application) : AndroidViewModel(application) {
                         // SHUTTER status
                         row.createCell(8).also {
                             if (shutterDone) {
-                                it.setCellValue("Y")
+                                it.setCellValue("C")
                                 it.cellStyle = doneStyle
                             } else if (rowStyle != null) {
                                 it.cellStyle = rowStyle
@@ -555,7 +587,7 @@ class DWViewModel(application: Application) : AndroidViewModel(application) {
                         // GLASS status
                         row.createCell(9).also {
                             if (glassDone) {
-                                it.setCellValue("Y")
+                                it.setCellValue("C")
                                 it.cellStyle = doneStyle
                             } else if (rowStyle != null) {
                                 it.cellStyle = rowStyle
@@ -601,9 +633,12 @@ class DWViewModel(application: Application) : AndroidViewModel(application) {
                 withContext(Dispatchers.IO) {
                     val wb = XSSFWorkbook(inputStream)
 
+                    // Try matching sheets by sheetName first, then by tower number
                     for (tower in towers) {
-                        val sheetName = tower.sheetName
-                        val sheet = wb.getSheet(sheetName) ?: continue
+                        val sheet = wb.getSheet(tower.sheetName)
+                            ?: wb.getSheet("Tower ${tower.name.filter { it.isDigit() }}")
+                            ?: wb.getSheet(tower.name)
+                            ?: continue
 
                         // key: roomName -> list of (typeName, kind, breadth, height, flatNum, frameDone, shutterDone, glassDone)
                         data class DWRow(val typeName: String, val kind: String, val breadth: Double, val height: Double, val flatNum: Int, val frameDone: Boolean, val shutterDone: Boolean, val glassDone: Boolean)
@@ -612,17 +647,17 @@ class DWViewModel(application: Application) : AndroidViewModel(application) {
                         for (r in 1..sheet.lastRowNum) {
                             val row = sheet.getRow(r) ?: continue
                             // cols: 0=Tower, 1=FlatNo, 2=RoomName, 3=TypeName, 4=D/W, 5=W, 6=H, 7=FRAME, 8=SHUTTER, 9=GLASS
-                            val roomName = row.getCell(2)?.stringCellValue?.trim()?.takeIf { it.isNotBlank() } ?: continue
-                            val typeName = row.getCell(3)?.stringCellValue?.trim()?.takeIf { it.isNotBlank() } ?: continue
-                            val kindRaw  = row.getCell(4)?.stringCellValue?.trim()?.uppercase() ?: "W"
+                            val roomName = cellString(row.getCell(2))?.takeIf { it.isNotBlank() } ?: continue
+                            val typeName = cellString(row.getCell(3))?.takeIf { it.isNotBlank() } ?: continue
+                            val kindRaw  = cellString(row.getCell(4))?.uppercase() ?: "W"
                             val kind     = if (kindRaw == "D") "door" else "window"
-                            val breadth  = try { row.getCell(5)?.numericCellValue ?: 0.0 } catch (_: Exception) { 0.0 }
-                            val height   = try { row.getCell(6)?.numericCellValue ?: 0.0 } catch (_: Exception) { 0.0 }
-                            val flatNum  = try { row.getCell(1)?.numericCellValue?.toInt() ?: continue } catch (_: Exception) { continue }
+                            val breadth  = cellDouble(row.getCell(5))
+                            val height   = cellDouble(row.getCell(6))
+                            val flatNum  = cellDouble(row.getCell(1)).toInt().takeIf { it > 0 } ?: continue
                             
-                            val frameRaw = try { row.getCell(7)?.stringCellValue?.trim() ?: "" } catch (_: Exception) { "" }
-                            val shutterRaw = try { row.getCell(8)?.stringCellValue?.trim() ?: "" } catch (_: Exception) { "" }
-                            val glassRaw = try { row.getCell(9)?.stringCellValue?.trim() ?: "" } catch (_: Exception) { "" }
+                            val frameRaw   = cellString(row.getCell(7)) ?: ""
+                            val shutterRaw = cellString(row.getCell(8)) ?: ""
+                            val glassRaw   = cellString(row.getCell(9)) ?: ""
                             
                             val frameDone   = frameRaw.equals("Y", ignoreCase = true) || frameRaw.equals("C", ignoreCase = true)
                             val shutterDone = shutterRaw.equals("Y", ignoreCase = true) || shutterRaw.equals("C", ignoreCase = true)

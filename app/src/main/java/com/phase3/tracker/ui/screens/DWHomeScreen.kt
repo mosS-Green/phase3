@@ -26,6 +26,7 @@ fun DWHomeScreen(
     towers: List<Tower>,
     dwTypes: List<DWType>,
     onTowerClick: (towerIndex: Int) -> Unit,
+    onUnitTypeClick: (towerIndex: Int, unitDigit: Int) -> Unit,
     onAddType: (name: String, kind: String, height: Double, breadth: Double) -> Unit,
     onUpdateType: (id: Int, name: String, kind: String, height: Double, breadth: Double) -> Unit,
     onDeleteType: (id: Int) -> Unit,
@@ -225,6 +226,38 @@ fun DWHomeScreen(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+
+                        // Unit type buttons
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                "UNIT TYPES",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    letterSpacing = 1.5.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                ),
+                                modifier = Modifier.align(Alignment.CenterVertically)
+                            )
+                            Spacer(modifier = Modifier.weight(1f))
+                            listOf(1 to "A", 2 to "B", 3 to "C", 4 to "D").forEach { (digit, label) ->
+                                FilledTonalButton(
+                                    onClick = { onUnitTypeClick(index, digit) },
+                                    modifier = Modifier.height(32.dp),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text(
+                                        label,
+                                        style = MaterialTheme.typography.labelMedium.copy(
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }

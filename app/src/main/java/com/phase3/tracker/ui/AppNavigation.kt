@@ -203,9 +203,6 @@ fun AppNavigation(viewModel: MainViewModel) {
                     onTowerClick = { towerIndex ->
                         navController.navigate(Screen.Tower.createRoute(towerIndex))
                     },
-                    onUnitTypeClick = { towerIndex, unitDigit ->
-                        navController.navigate(Screen.UnitType.createRoute(towerIndex, unitDigit))
-                    },
                     onDownload = {
                         viewModel.refreshFromSupabase()
                     },
@@ -284,6 +281,9 @@ fun AppNavigation(viewModel: MainViewModel) {
                     dwTypes = dwTypes,
                     onTowerClick = { towerIndex ->
                         navController.navigate(Screen.DWColumn.createRoute(towerIndex))
+                    },
+                    onUnitTypeClick = { towerIndex, unitDigit ->
+                        navController.navigate(Screen.UnitType.createRoute(towerIndex, unitDigit))
                     },
                     onAddType = { name, kind, h, b -> dwViewModel.addType(name, kind, h, b) },
                     onUpdateType = { id, name, kind, h, b -> dwViewModel.updateType(id, name, kind, h, b) },

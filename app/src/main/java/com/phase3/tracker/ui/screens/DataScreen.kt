@@ -7,14 +7,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CloudDownload
-import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.DoorFront
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.phase3.tracker.model.Tower
@@ -27,7 +25,6 @@ fun DataScreen(
     towers: List<Tower>,
     isDownloading: Boolean,
     onTowerClick: (Int) -> Unit,
-    onUnitTypeClick: (towerIndex: Int, unitDigit: Int) -> Unit,
     onDownload: () -> Unit,
     onDWClick: () -> Unit,
     onBack: () -> Unit
@@ -85,8 +82,7 @@ fun DataScreen(
             towers.forEachIndexed { index, tower ->
                 TowerCard(
                     tower = tower,
-                    onClick = { onTowerClick(index) },
-                    onUnitTypeClick = { unitDigit -> onUnitTypeClick(index, unitDigit) }
+                    onClick = { onTowerClick(index) }
                 )
             }
 
@@ -140,8 +136,7 @@ fun DataScreen(
 @Composable
 private fun TowerCard(
     tower: Tower,
-    onClick: () -> Unit,
-    onUnitTypeClick: (unitDigit: Int) -> Unit
+    onClick: () -> Unit
 ) {
     val completion = tower.overallCompletion
     val isDark = isSystemInDarkTheme()
@@ -217,38 +212,6 @@ private fun TowerCard(
                 color = completeColor,
                 trackColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
             )
-
-            // Unit Type buttons
-            Spacer(modifier = Modifier.height(12.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(
-                    "UNIT TYPES",
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        letterSpacing = 1.5.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    ),
-                    modifier = Modifier.align(Alignment.CenterVertically)
-                )
-                Spacer(modifier = Modifier.weight(1f))
-                listOf(1 to "A", 2 to "B", 3 to "C", 4 to "D").forEach { (digit, label) ->
-                    FilledTonalButton(
-                        onClick = { onUnitTypeClick(digit) },
-                        modifier = Modifier.height(32.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text(
-                            label,
-                            style = MaterialTheme.typography.labelMedium.copy(
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        )
-                    }
-                }
-            }
         }
     }
 }
