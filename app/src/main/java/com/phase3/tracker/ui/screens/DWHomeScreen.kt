@@ -31,6 +31,7 @@ fun DWHomeScreen(
     onDeleteType: (id: Int) -> Unit,
     onExportExcel: () -> Unit,
     onImportExcel: () -> Unit,
+    onSyncToActivities: () -> Unit,
     statusMessage: String?,
     onStatusDismiss: () -> Unit,
     onBack: () -> Unit
@@ -170,6 +171,10 @@ fun DWHomeScreen(
                     }
                 },
                 actions = {
+                    // Sync DW → Activities
+                    IconButton(onClick = onSyncToActivities) {
+                        Icon(Icons.Default.SyncAlt, contentDescription = "Sync to Activities")
+                    }
                     // Import
                     IconButton(onClick = onImportExcel) {
                         Icon(Icons.Default.FileOpen, contentDescription = "Import Excel")

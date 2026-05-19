@@ -49,11 +49,18 @@ class DWViewModel(application: Application) : AndroidViewModel(application) {
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
+    private val _isImporting = MutableStateFlow(false)
+    val isImporting: StateFlow<Boolean> = _isImporting.asStateFlow()
+
     private val _statusMessage = MutableStateFlow<String?>(null)
     val statusMessage: StateFlow<String?> = _statusMessage.asStateFlow()
 
     private val _isSyncing = MutableStateFlow(false)
     val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
+
+    // All rooms for a tower (used by Unit Type screen)
+    private val _allTowerRooms = MutableStateFlow<Map<String, List<DWRoom>>>(emptyMap())
+    val allTowerRooms: StateFlow<Map<String, List<DWRoom>>> = _allTowerRooms.asStateFlow()
 
     // Debounce for status updates
     private data class PendingDWStatus(
@@ -589,6 +596,7 @@ class DWViewModel(application: Application) : AndroidViewModel(application) {
     fun importFromExcel(inputStream: InputStream, towers: List<Tower>) {
         viewModelScope.launch {
             _isLoading.value = true
+            _isImporting.value = true
             try {
                 withContext(Dispatchers.IO) {
                     val wb = XSSFWorkbook(inputStream)
@@ -616,9 +624,9 @@ class DWViewModel(application: Application) : AndroidViewModel(application) {
                             val shutterRaw = try { row.getCell(8)?.stringCellValue?.trim() ?: "" } catch (_: Exception) { "" }
                             val glassRaw = try { row.getCell(9)?.stringCellValue?.trim() ?: "" } catch (_: Exception) { "" }
                             
-                            val frameDone   = frameRaw.equals("Y", ignoreCase = true)
-                            val shutterDone = shutterRaw.equals("Y", ignoreCase = true)
-                            val glassDone   = glassRaw.equals("Y", ignoreCase = true)
+                            val frameDone   = frameRaw.equals("Y", ignoreCase = true) || frameRaw.equals("C", ignoreCase = true)
+                            val shutterDone = shutterRaw.equals("Y", ignoreCase = true) || shutterRaw.equals("C", ignoreCase = true)
+                            val glassDone   = glassRaw.equals("Y", ignoreCase = true) || glassRaw.equals("C", ignoreCase = true)
 
                             roomRows.getOrPut(roomName) { mutableListOf() }
                                 .add(DWRow(typeName, kind, breadth, height, flatNum, frameDone, shutterDone, glassDone))
@@ -729,9 +737,198 @@ class DWViewModel(application: Application) : AndroidViewModel(application) {
                 _statusMessage.value = "Import failed: ${e.message}"
             } finally {
                 _isLoading.value = false
+                _isImporting.value = false
             }
         }
     }
 
     fun clearStatusMessage() { _statusMessage.value = null }
+
+    // ── Load all rooms for a tower (for Unit Type screen) ────────
+
+    fun loadAllRoomsForTower(towerId: Int) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            try {
+                val result = mutableMapOf<String, List<DWRoom>>()
+                for (colType in listOf("frame", "shutter", "glass")) {
+                    val roomsResult = supabase.fetchDWRooms(towerId, colType)
+                    val roomRows = roomsResult.getOrThrow()
+                    val roomList = mutableListOf<DWRoom>()
+                    for (i in 0 until roomRows.length()) {
+                        val r = roomRows.getJSONObject(i)
+                        val roomId = r.getInt("id")
+                        val rtResult = supabase.fetchDWRoomTypes(roomId)
+                        val rtRows = rtResult.getOrElse { JSONArray() }
+                        val types = mutableListOf<DWType>()
+                        for (j in 0 until rtRows.length()) {
+                            val rt = rtRows.getJSONObject(j)
+                            val t = rt.optJSONObject("dw_types") ?: continue
+                            types.add(DWType(
+                                id = t.getInt("id"),
+                                name = t.getString("name"),
+                                kind = t.getString("kind"),
+                                height = t.optDouble("height", 0.0),
+                                breadth = t.optDouble("breadth", 0.0)
+                            ))
+                        }
+                        val stResult = supabase.fetchDWStatuses(roomId)
+                        val stRows = stResult.getOrElse { JSONArray() }
+                        val flatStatuses = mutableMapOf<Int, MutableMap<Int, Boolean>>()
+                        for (j in 0 until stRows.length()) {
+                            val s = stRows.getJSONObject(j)
+                            val flatNum = s.getInt("flat_number")
+                            val typeId = s.getInt("type_id")
+                            val isDone = s.getBoolean("is_done")
+                            flatStatuses.getOrPut(flatNum) { mutableMapOf() }[typeId] = isDone
+                        }
+                        roomList.add(DWRoom(
+                            id = roomId,
+                            towerId = towerId,
+                            columnType = colType,
+                            name = r.getString("name"),
+                            sortOrder = r.getInt("sort_order"),
+                            types = types,
+                            flatStatuses = flatStatuses
+                        ))
+                    }
+                    result[colType] = roomList
+                }
+                _allTowerRooms.value = result
+            } catch (e: Exception) {
+                _statusMessage.value = "Load failed: ${e.message}"
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+
+    /** Toggle DW status for a specific room/type/flat, updating allTowerRooms state */
+    fun toggleDWStatusInAllRooms(roomId: Int, typeId: Int, flatNumber: Int) {
+        val current = _allTowerRooms.value
+        var found = false
+        var newIsDone = false
+
+        // Build a fully new immutable structure so Compose can detect the change
+        val updated = current.mapValues { (_, rooms) ->
+            rooms.map { room ->
+                if (room.id == roomId) {
+                    found = true
+                    val flatMap = room.flatStatuses.toMutableMap()
+                    val typeMap = (flatMap[flatNumber] ?: mutableMapOf()).toMutableMap()
+                    val curVal = typeMap[typeId] ?: false
+                    newIsDone = !curVal
+                    typeMap[typeId] = newIsDone
+                    flatMap[flatNumber] = typeMap
+                    room.copy(flatStatuses = flatMap)
+                } else room
+            }
+        }
+
+        if (!found) return
+        _allTowerRooms.value = updated
+
+        // Also update _rooms if the same room is loaded there
+        _rooms.value = _rooms.value.map { room ->
+            if (room.id == roomId) {
+                val flatMap = room.flatStatuses.toMutableMap()
+                val typeMap = (flatMap[flatNumber] ?: mutableMapOf()).toMutableMap()
+                typeMap[typeId] = newIsDone
+                flatMap[flatNumber] = typeMap
+                room.copy(flatStatuses = flatMap)
+            } else room
+        }
+
+        // Enqueue for sync
+        synchronized(pendingLock) {
+            pendingUpdates.removeAll { it.roomId == roomId && it.typeId == typeId && it.flatNumber == flatNumber }
+            pendingUpdates.add(PendingDWStatus(roomId, typeId, flatNumber, newIsDone))
+        }
+        _isSyncing.value = true
+        debounceJob?.cancel()
+        debounceJob = viewModelScope.launch {
+            delay(500)
+            flushPendingUpdates()
+        }
+    }
+
+    // ── Calculate per-flat completion for a column type ──────────
+
+    /**
+     * Calculate per-flat completion %.
+     * Prefers cached [_allTowerRooms] data if available for the given tower.
+     * Falls back to fresh API fetch otherwise.
+     */
+    suspend fun calculatePerFlatCompletion(towerId: Int, columnType: String): Map<Int, Float> {
+        // Try using cached allTowerRooms first
+        val cached = _allTowerRooms.value[columnType]
+        val roomsToUse: List<DWRoom> = if (cached != null && cached.isNotEmpty() && cached.first().towerId == towerId) {
+            cached
+        } else {
+            // Fall back to fresh API fetch
+            fetchRoomsFromApi(towerId, columnType)
+        }
+
+        val result = mutableMapOf<Int, Float>()
+        for (flatNum in Activity.FLAT_NUMBERS) {
+            var totalWeight = 0
+            var doneWeight = 0
+            for (room in roomsToUse) {
+                for (type in room.types) {
+                    val w = if (type.isDoor) 3 else 1
+                    totalWeight += w
+                    val isDone = room.flatStatuses[flatNum]?.get(type.id) ?: false
+                    if (isDone) doneWeight += w
+                }
+            }
+            result[flatNum] = if (totalWeight == 0) 0f else doneWeight.toFloat() / totalWeight * 100f
+        }
+        return result
+    }
+
+    /** Fetch rooms + types + statuses from API for a tower/column type */
+    private suspend fun fetchRoomsFromApi(towerId: Int, columnType: String): List<DWRoom> {
+        val roomsResult = supabase.fetchDWRooms(towerId, columnType)
+        val roomRows = roomsResult.getOrElse { return emptyList() }
+
+        val allRooms = mutableListOf<DWRoom>()
+        for (i in 0 until roomRows.length()) {
+            val r = roomRows.getJSONObject(i)
+            val roomId = r.getInt("id")
+            val rtResult = supabase.fetchDWRoomTypes(roomId)
+            val rtRows = rtResult.getOrElse { JSONArray() }
+            val types = mutableListOf<DWType>()
+            for (j in 0 until rtRows.length()) {
+                val rt = rtRows.getJSONObject(j)
+                val t = rt.optJSONObject("dw_types") ?: continue
+                types.add(DWType(
+                    id = t.getInt("id"),
+                    name = t.getString("name"),
+                    kind = t.getString("kind"),
+                    height = t.optDouble("height", 0.0),
+                    breadth = t.optDouble("breadth", 0.0)
+                ))
+            }
+            val stResult = supabase.fetchDWStatuses(roomId)
+            val stRows = stResult.getOrElse { JSONArray() }
+            val flatStatuses = mutableMapOf<Int, MutableMap<Int, Boolean>>()
+            for (j in 0 until stRows.length()) {
+                val s = stRows.getJSONObject(j)
+                val flatNum = s.getInt("flat_number")
+                val typeId = s.getInt("type_id")
+                val isDone = s.getBoolean("is_done")
+                flatStatuses.getOrPut(flatNum) { mutableMapOf() }[typeId] = isDone
+            }
+            allRooms.add(DWRoom(
+                id = roomId,
+                towerId = towerId,
+                columnType = columnType,
+                name = r.getString("name"),
+                sortOrder = r.getInt("sort_order"),
+                types = types,
+                flatStatuses = flatStatuses
+            ))
+        }
+        return allRooms
+    }
 }

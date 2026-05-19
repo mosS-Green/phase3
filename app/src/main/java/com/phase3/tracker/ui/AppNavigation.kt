@@ -8,10 +8,16 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -19,8 +25,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -50,6 +60,10 @@ sealed class Screen(val route: String) {
     data object DWFlat : Screen("dw_flat/{towerIndex}/{flatNumber}") {
         fun createRoute(towerIndex: Int, flatNumber: Int) = "dw_flat/$towerIndex/$flatNumber"
     }
+    // Unit Type screen
+    data object UnitType : Screen("unit_type/{towerIndex}/{unitDigit}") {
+        fun createRoute(towerIndex: Int, unitDigit: Int) = "unit_type/$towerIndex/$unitDigit"
+    }
 }
 
 @Composable
@@ -57,6 +71,7 @@ fun AppNavigation(viewModel: MainViewModel) {
     val navController = rememberNavController()
     val towers by viewModel.towers.collectAsStateWithLifecycle()
     val isDownloading by viewModel.isDownloading.collectAsStateWithLifecycle()
+    val isMainImporting by viewModel.isImporting.collectAsStateWithLifecycle()
     val isSyncing by viewModel.isSyncing.collectAsStateWithLifecycle()
     val syncDone by viewModel.syncDone.collectAsStateWithLifecycle()
     val isOnline by viewModel.isOnline.collectAsStateWithLifecycle()
@@ -70,10 +85,22 @@ fun AppNavigation(viewModel: MainViewModel) {
     val dwRooms by dwViewModel.rooms.collectAsStateWithLifecycle()
     val dwIsLoading by dwViewModel.isLoading.collectAsStateWithLifecycle()
     val dwIsSyncing by dwViewModel.isSyncing.collectAsStateWithLifecycle()
+    val dwIsImporting by dwViewModel.isImporting.collectAsStateWithLifecycle()
+    val allTowerRooms by dwViewModel.allTowerRooms.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
 
     val dwStatusMessage by dwViewModel.statusMessage.collectAsStateWithLifecycle()
+    val mainStatusMessage by viewModel.statusMessage.collectAsStateWithLifecycle()
+
+    // Snackbar for main status messages
+    val snackbarHostState = remember { SnackbarHostState() }
+    LaunchedEffect(mainStatusMessage) {
+        if (!mainStatusMessage.isNullOrBlank()) {
+            snackbarHostState.showSnackbar(mainStatusMessage!!)
+            viewModel.clearStatusMessage()
+        }
+    }
 
     // File picker for DW Excel import
     val importLauncher = rememberLauncherForActivityResult(
@@ -101,7 +128,10 @@ fun AppNavigation(viewModel: MainViewModel) {
         }
     }
 
-    // Global overlay: NavHost + persistent sync indicator
+    // Is any import in progress?
+    val isAnyImporting = isMainImporting || dwIsImporting
+
+    // Global overlay: NavHost + persistent sync indicator + loading overlay
     Box(modifier = Modifier.fillMaxSize()) {
         NavHost(navController = navController, startDestination = Screen.Home.route) {
 
@@ -148,13 +178,37 @@ fun AppNavigation(viewModel: MainViewModel) {
             }
 
             composable(Screen.Data.route) {
+                // Activity sync check dialog — shows after download completes
+                var showSyncCheck by remember { mutableStateOf(false) }
+                var wasDownloading by remember { mutableStateOf(false) }
+
+                // Detect when download finishes (was true, now false)
+                LaunchedEffect(isDownloading) {
+                    if (wasDownloading && !isDownloading) {
+                        showSyncCheck = true
+                    }
+                    wasDownloading = isDownloading
+                }
+
+                if (showSyncCheck) {
+                    ActivitySyncCheckDialog(
+                        viewModel = viewModel,
+                        onDismiss = { showSyncCheck = false }
+                    )
+                }
+
                 DataScreen(
                     towers = towers,
                     isDownloading = isDownloading,
                     onTowerClick = { towerIndex ->
                         navController.navigate(Screen.Tower.createRoute(towerIndex))
                     },
-                    onDownload = { viewModel.refreshFromSupabase() },
+                    onUnitTypeClick = { towerIndex, unitDigit ->
+                        navController.navigate(Screen.UnitType.createRoute(towerIndex, unitDigit))
+                    },
+                    onDownload = {
+                        viewModel.refreshFromSupabase()
+                    },
                     onDWClick = { navController.navigate(Screen.DWHome.route) },
                     onBack = { navController.popBackStack() }
                 )
@@ -242,6 +296,7 @@ fun AppNavigation(viewModel: MainViewModel) {
                         }
                         importLauncher.launch(intent)
                     },
+                    onSyncToActivities = { viewModel.syncDWToActivities(dwViewModel) },
                     statusMessage = dwStatusMessage,
                     onStatusDismiss = { dwViewModel.clearStatusMessage() },
                     onBack = { navController.popBackStack() }
@@ -301,6 +356,37 @@ fun AppNavigation(viewModel: MainViewModel) {
                     onBack = { navController.popBackStack() }
                 )
             }
+
+            // ── Unit Type Screen ────────────────────────────────
+
+            composable(
+                route = Screen.UnitType.route,
+                arguments = listOf(
+                    navArgument("towerIndex") { type = NavType.IntType },
+                    navArgument("unitDigit") { type = NavType.IntType }
+                )
+            ) { backStackEntry ->
+                val towerIndex = backStackEntry.arguments?.getInt("towerIndex") ?: 0
+                val unitDigit = backStackEntry.arguments?.getInt("unitDigit") ?: 1
+                val tower = towers.getOrNull(towerIndex)
+
+                if (tower != null) {
+                    LaunchedEffect(tower.id) {
+                        dwViewModel.loadAllRoomsForTower(tower.id)
+                    }
+
+                    UnitTypeScreen(
+                        towerName = tower.name,
+                        unitDigit = unitDigit,
+                        allTowerRooms = allTowerRooms,
+                        isLoading = dwIsLoading,
+                        onToggleStatus = { roomId, typeId, flatNumber ->
+                            dwViewModel.toggleDWStatusInAllRooms(roomId, typeId, flatNumber)
+                        },
+                        onBack = { navController.popBackStack() }
+                    )
+                }
+            }
         }
 
         // ── Persistent global sync indicator ────────────────────────
@@ -315,7 +401,185 @@ fun AppNavigation(viewModel: MainViewModel) {
                 .padding(top = 12.dp, end = 12.dp)
                 .zIndex(100f)
         )
+
+        // ── Full-screen importing overlay ───────────────────────────
+        AnimatedVisibility(
+            visible = isAnyImporting,
+            enter = fadeIn(tween(200)),
+            exit = fadeOut(tween(200)),
+            modifier = Modifier
+                .fillMaxSize()
+                .zIndex(200f)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.6f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Card(
+                    shape = RoundedCornerShape(24.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surface
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(48.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(20.dp)
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(48.dp),
+                            strokeWidth = 4.dp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            "Importing…",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            "Please wait while data is being\nimported and synced.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                    }
+                }
+            }
+        }
     }
+}
+
+// ── Activity Sync Check Dialog ─────────────────────────────────────
+
+@Composable
+fun ActivitySyncCheckDialog(
+    viewModel: MainViewModel,
+    onDismiss: () -> Unit
+) {
+    val towers by viewModel.towers.collectAsStateWithLifecycle()
+    val unmatched = remember(towers) { viewModel.getUnmatchedActivities() }
+
+    if (unmatched.isEmpty()) {
+        // No unmatched activities — auto-dismiss or show success briefly
+        LaunchedEffect(Unit) { onDismiss() }
+        return
+    }
+
+    val t9Color = Color(0xFF42A5F5)  // Blue for Tower 9
+    val t10Color = Color(0xFFFF9800)  // Orange for Tower 10
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(24.dp)
+                )
+                Text("Activity Sync", style = MaterialTheme.typography.titleMedium)
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    "${unmatched.size} activities exist in only one tower:",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                LazyColumn(
+                    modifier = Modifier.heightIn(max = 400.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    items(unmatched) { item ->
+                        val color = if (item.towerIndex == 0) t9Color else t10Color
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = color.copy(alpha = 0.12f)
+                            )
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                // Color indicator
+                                Box(
+                                    modifier = Modifier
+                                        .size(4.dp, 28.dp)
+                                        .clip(RoundedCornerShape(2.dp))
+                                        .background(color)
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        item.activity.name,
+                                        style = MaterialTheme.typography.bodySmall.copy(
+                                            fontWeight = FontWeight.Medium
+                                        ),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        "Only in ${item.towerName}",
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontSize = 10.sp,
+                                            color = color
+                                        )
+                                    )
+                                }
+                                // Copy to other tower
+                                IconButton(
+                                    onClick = {
+                                        viewModel.copyActivityToOtherTower(item.activity, item.towerIndex)
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.ContentCopy,
+                                        contentDescription = "Copy to other tower",
+                                        modifier = Modifier.size(16.dp),
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                                // Delete
+                                IconButton(
+                                    onClick = {
+                                        viewModel.deleteActivityById(item.activity.id, item.towerIndex)
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Delete,
+                                        contentDescription = "Delete",
+                                        modifier = Modifier.size(16.dp),
+                                        tint = MaterialTheme.colorScheme.error
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Done")
+            }
+        },
+        shape = RoundedCornerShape(28.dp)
+    )
 }
 
 @Composable

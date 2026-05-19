@@ -49,6 +49,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isDownloading = MutableStateFlow(false)
     val isDownloading: StateFlow<Boolean> = _isDownloading.asStateFlow()
 
+    private val _isImporting = MutableStateFlow(false)
+    val isImporting: StateFlow<Boolean> = _isImporting.asStateFlow()
+
     private val _isSyncing = MutableStateFlow(false)
     val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
 
@@ -617,6 +620,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun importActivitiesFromExcel(inputStream: InputStream) {
         viewModelScope.launch {
+            _isImporting.value = true
             _isDownloading.value = true
             try {
                 withContext(Dispatchers.IO) {
@@ -691,6 +695,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _statusMessage.value = "Import failed: ${e.message}"
             } finally {
                 _isDownloading.value = false
+                _isImporting.value = false
             }
         }
     }
@@ -753,6 +758,186 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearStatusMessage() {
         _statusMessage.value = null
+    }
+
+    // ── DW → Main Activity Percentage Sync ──────────────────────
+
+    fun syncDWToActivities(dwViewModel: DWViewModel) {
+        viewModelScope.launch {
+            _isSyncing.value = true
+            try {
+                withContext(Dispatchers.IO) {
+                    val towersList = _towers.value.toMutableList()
+
+                    val dwActivityNames = mapOf(
+                        "frame" to "Al. Doors & Windows [FRAME]",
+                        "shutter" to "Al. Doors & Windows [SHUTTER]",
+                        "glass" to "Al. Doors & Windows [GLASS]"
+                    )
+
+                    for (towerIndex in towersList.indices) {
+                        val tower = towersList[towerIndex]
+
+                        for ((colType, actName) in dwActivityNames) {
+                            val actIdx = tower.activities.indexOfFirst { it.name == actName }
+                            if (actIdx < 0) continue
+                            val activity = tower.activities[actIdx]
+                            if (!activity.usePercentage) continue
+
+                            val perFlat = dwViewModel.calculatePerFlatCompletion(tower.id, colType)
+                            val newPercentages = activity.percentages.toMutableMap()
+                            for ((flatNum, pct) in perFlat) {
+                                newPercentages[flatNum] = pct.toInt().coerceIn(0, 100)
+                            }
+
+                            val updatedActivity = activity.copy(percentages = newPercentages)
+                            val newActivities = tower.activities.toMutableList()
+                            newActivities[actIdx] = updatedActivity
+                            towersList[towerIndex] = tower.copy(activities = newActivities)
+
+                            // Upsert to Supabase
+                            val flatArr = JSONArray()
+                            Activity.FLAT_NUMBERS.forEach { flatNum ->
+                                flatArr.put(JSONObject().apply {
+                                    put("activity_id", activity.id)
+                                    put("flat_number", flatNum)
+                                    put("status", "empty")
+                                    put("percentage", newPercentages[flatNum] ?: 0)
+                                })
+                            }
+                            supabase.upsertFlatStatuses(flatArr)
+                        }
+                    }
+
+                    _towers.value = towersList.toList()
+                }
+                _statusMessage.value = "DW percentages synced to activities ✓"
+            } catch (e: Exception) {
+                _statusMessage.value = "DW sync failed: ${e.message}"
+            } finally {
+                _isSyncing.value = false
+            }
+        }
+    }
+
+    // ── Cross-tower Activity Sync Check ─────────────────────────
+
+    data class UnmatchedActivity(
+        val activity: Activity,
+        val towerIndex: Int,
+        val towerName: String
+    )
+
+    fun getUnmatchedActivities(): List<UnmatchedActivity> {
+        val towersList = _towers.value
+        if (towersList.size < 2) return emptyList()
+
+        val t0Names = towersList[0].activities.map { it.name.lowercase() }.toSet()
+        val t1Names = towersList[1].activities.map { it.name.lowercase() }.toSet()
+
+        val result = mutableListOf<UnmatchedActivity>()
+
+        // Activities in tower 0 but not in tower 1
+        towersList[0].activities.forEach { activity ->
+            if (activity.name.lowercase() !in t1Names) {
+                result.add(UnmatchedActivity(activity, 0, towersList[0].name))
+            }
+        }
+
+        // Activities in tower 1 but not in tower 0
+        towersList[1].activities.forEach { activity ->
+            if (activity.name.lowercase() !in t0Names) {
+                result.add(UnmatchedActivity(activity, 1, towersList[1].name))
+            }
+        }
+
+        return result
+    }
+
+    /** Copy an activity to the other tower (for fixing unmatched activities) */
+    fun copyActivityToOtherTower(activity: Activity, sourceTowerIndex: Int) {
+        viewModelScope.launch {
+            val towersList = _towers.value.toMutableList()
+            val targetTowerIndex = if (sourceTowerIndex == 0) 1 else 0
+            val targetTower = towersList.getOrNull(targetTowerIndex) ?: return@launch
+            val targetTowerName = targetTower.name
+
+            try {
+                withContext(Dispatchers.IO) {
+                    val nextSortOrder = targetTower.activities.maxOfOrNull { it.sortOrder + 1 } ?: 0
+                    val payload = JSONObject().apply {
+                        put("tower_id", targetTower.id)
+                        put("name", activity.name)
+                        put("group_name", activity.groupName)
+                        put("contractor", activity.contractor)
+                        put("categories", Activity.serializeCategories(activity.categories))
+                        put("weightage", activity.weightage)
+                        put("use_percentage", activity.usePercentage)
+                        put("is_floor_based", activity.isFloorBased)
+                        put("sort_order", nextSortOrder)
+                    }
+
+                    val result = supabase.insertActivity(payload)
+                    val row = result.getOrNull()?.optJSONObject(0)
+                        ?: throw Exception("Failed to insert activity")
+                    val newId = row.getInt("id")
+
+                    // Create empty flat statuses
+                    val flatArray = JSONArray()
+                    Activity.FLAT_NUMBERS.forEach { flatNum ->
+                        flatArray.put(JSONObject().apply {
+                            put("activity_id", newId)
+                            put("flat_number", flatNum)
+                            put("status", "empty")
+                            put("percentage", 0)
+                        })
+                    }
+                    supabase.upsertFlatStatuses(flatArray)
+
+                    val statuses = mutableMapOf<Int, FlatStatus>()
+                    val percentages = mutableMapOf<Int, Int>()
+                    Activity.FLAT_NUMBERS.forEach {
+                        statuses[it] = FlatStatus.EMPTY
+                        if (activity.usePercentage) percentages[it] = 0
+                    }
+
+                    val newActivity = activity.copy(
+                        id = newId, towerId = targetTower.id,
+                        sortOrder = nextSortOrder,
+                        statuses = statuses, percentages = percentages
+                    )
+                    val newActivities = targetTower.activities.toMutableList().apply { add(newActivity) }
+                    towersList[targetTowerIndex] = targetTower.copy(activities = newActivities)
+                    _towers.value = towersList.toList()
+                }
+                _statusMessage.value = "Copied '${activity.name}' to $targetTowerName"
+            } catch (e: Exception) {
+                _statusMessage.value = "Copy failed: ${e.message}"
+            }
+        }
+    }
+
+    /** Delete an activity by its ID directly */
+    fun deleteActivityById(activityId: Int, towerIndex: Int) {
+        viewModelScope.launch {
+            try {
+                val towersList = _towers.value.toMutableList()
+                val tower = towersList.getOrNull(towerIndex) ?: return@launch
+                val actIdx = tower.activities.indexOfFirst { it.id == activityId }
+                if (actIdx < 0) return@launch
+                val actName = tower.activities[actIdx].name
+
+                withContext(Dispatchers.IO) {
+                    supabase.deleteActivity(activityId)
+                    val newActivities = tower.activities.toMutableList().apply { removeAt(actIdx) }
+                    towersList[towerIndex] = tower.copy(activities = newActivities)
+                    _towers.value = towersList.toList()
+                }
+                _statusMessage.value = "Deleted: $actName"
+            } catch (e: Exception) {
+                _statusMessage.value = "Delete failed: ${e.message}"
+            }
+        }
     }
 
     override fun onCleared() {
