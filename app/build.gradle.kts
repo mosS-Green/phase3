@@ -1,7 +1,31 @@
+import java.io.ByteArrayOutputStream
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+}
+
+fun getCommitCount(): Int {
+    return try {
+        val stdout = ByteArrayOutputStream()
+        providers.exec {
+            commandLine("git", "rev-list", "--count", "HEAD")
+        }.standardOutput.asText.map { it.trim().toIntOrNull() ?: 3 }.get()
+    } catch (e: Exception) {
+        3
+    }
+}
+
+fun getGitHash(): String {
+    return try {
+        val stdout = ByteArrayOutputStream()
+        providers.exec {
+            commandLine("git", "rev-parse", "--short", "HEAD")
+        }.standardOutput.asText.map { it.trim() }.get()
+    } catch (e: Exception) {
+        "unknown"
+    }
 }
 
 android {
@@ -12,8 +36,12 @@ android {
         applicationId = "com.phase3.tracker"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "3.0.0"
+        
+        val commits = getCommitCount()
+        val gitHash = getGitHash()
+        
+        versionCode = commits
+        versionName = "3.0.0-rev$commits-$gitHash"
         buildConfigField("String", "BOT_TOKEN", "\"${System.getenv("BOT_TOKEN") ?: ""}\"")
         buildConfigField("String", "CHAT_ID", "\"${System.getenv("CHAT_ID") ?: ""}\"")
         buildConfigField("String", "SUPABASE_URL", "\"${System.getenv("SUPABASE_URL") ?: ""}\"")

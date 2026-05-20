@@ -263,6 +263,24 @@ class ExcelManager {
         val percentages: Map<Int, Int>
     )
 
+    private fun cellString(cell: org.apache.poi.ss.usermodel.Cell?): String? {
+        if (cell == null) return null
+        return try {
+            when (cell.cellType) {
+                org.apache.poi.ss.usermodel.CellType.STRING -> cell.stringCellValue?.trim()
+                org.apache.poi.ss.usermodel.CellType.NUMERIC -> {
+                    val v = cell.numericCellValue
+                    if (v == v.toLong().toDouble()) v.toLong().toString() else v.toString()
+                }
+                org.apache.poi.ss.usermodel.CellType.BOOLEAN -> cell.booleanCellValue.toString()
+                org.apache.poi.ss.usermodel.CellType.FORMULA -> try { cell.stringCellValue?.trim() } catch (_: Exception) {
+                    try { cell.numericCellValue.toString() } catch (_: Exception) { null }
+                }
+                else -> null
+            }
+        } catch (_: Exception) { null }
+    }
+
     /**
      * Parse an Activities XLSX file (same format as [buildWorkbook]) into a list of
      * [ParsedActivity] objects. Rows 0 (header) and 1 (blank) are skipped.
@@ -280,7 +298,8 @@ class ExcelManager {
             val flatCols = mutableMapOf<Int, Int>() // colIndex -> flatNumber
             for (c in FLAT_START_COL until (headerRow.lastCellNum.toInt())) {
                 val cell = headerRow.getCell(c) ?: continue
-                val flatNum = cell.numericCellValue.toInt()
+                val flatNumStr = cellString(cell) ?: continue
+                val flatNum = flatNumStr.toDoubleOrNull()?.toInt() ?: continue
                 if (flatNum > 0) flatCols[c] = flatNum
             }
 
@@ -288,12 +307,18 @@ class ExcelManager {
             for (rowIdx in 2..sheet.lastRowNum) {
                 val row = sheet.getRow(rowIdx) ?: continue
 
-                val rawGroup = row.getCell(GROUP_COL)?.stringCellValue?.trim() ?: continue
-                val name = row.getCell(ACTIVITY_COL)?.stringCellValue?.trim()?.takeIf { it.isNotBlank() } ?: continue
-                val contractor = row.getCell(CONTRACTOR_COL)?.stringCellValue?.trim() ?: ""
-                val categoriesRaw = row.getCell(CATEGORY_COL)?.stringCellValue?.trim() ?: ""
-                val weightage = row.getCell(WEIGHTAGE_COL)?.let {
-                    try { it.numericCellValue.toInt() } catch (_: Exception) { 5 }
+                val rawGroup = cellString(row.getCell(GROUP_COL)) ?: continue
+                val name = cellString(row.getCell(ACTIVITY_COL))?.takeIf { it.isNotBlank() } ?: continue
+                val contractor = cellString(row.getCell(CONTRACTOR_COL)) ?: ""
+                val categoriesRaw = cellString(row.getCell(CATEGORY_COL)) ?: ""
+                val weightage = row.getCell(WEIGHTAGE_COL)?.let { cell ->
+                    try {
+                        when (cell.cellType) {
+                            org.apache.poi.ss.usermodel.CellType.NUMERIC -> cell.numericCellValue.toInt()
+                            org.apache.poi.ss.usermodel.CellType.STRING -> cell.stringCellValue.trim().toIntOrNull() ?: 5
+                            else -> cellString(cell)?.toDoubleOrNull()?.toInt() ?: 5
+                        }
+                    } catch (_: Exception) { 5 }
                 } ?: 5
 
                 val usePercentage = rawGroup.endsWith("|%")
@@ -313,7 +338,10 @@ class ExcelManager {
                                     val s = cell.stringCellValue.trim().removeSuffix("%")
                                     s.toIntOrNull()?.coerceIn(0, 100) ?: 0
                                 }
-                                else -> 0
+                                else -> {
+                                    val s = cellString(cell)?.removeSuffix("%")
+                                    s?.toDoubleOrNull()?.toInt()?.coerceIn(0, 100) ?: 0
+                                }
                             }
                         } catch (_: Exception) { 0 }
                         percentages[flatNum] = pct
@@ -323,8 +351,7 @@ class ExcelManager {
                             when (cell?.cellType) {
                                 org.apache.poi.ss.usermodel.CellType.STRING ->
                                     cell.stringCellValue.trim().uppercase()
-                                org.apache.poi.ss.usermodel.CellType.NUMERIC -> ""
-                                else -> ""
+                                else -> cellString(cell)?.uppercase() ?: ""
                             }
                         } catch (_: Exception) { "" }
                         statuses[flatNum] = when (raw) {

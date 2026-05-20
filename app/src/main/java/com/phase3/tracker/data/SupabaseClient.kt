@@ -108,6 +108,12 @@ class SupabaseClient {
     suspend fun fetchDWRoomTypes(roomId: Int): Result<JSONArray> =
         get("dw_room_types?room_id=eq.$roomId&select=*,dw_types(*)")
 
+    suspend fun fetchDWRoomTypesByRoomIds(roomIds: List<Int>): Result<JSONArray> {
+        if (roomIds.isEmpty()) return Result.success(JSONArray())
+        val idsStr = roomIds.joinToString(",")
+        return get("dw_room_types?room_id=in.($idsStr)&select=*,dw_types(*)")
+    }
+
     suspend fun insertDWRoomType(payload: JSONObject): Result<JSONArray> =
         post("dw_room_types", payload.toString())
 
@@ -135,6 +141,12 @@ class SupabaseClient {
     // ── DW Statuses ─────────────────────────────────────────────────
     suspend fun fetchDWStatuses(roomId: Int): Result<JSONArray> =
         get("dw_statuses?room_id=eq.$roomId&select=*")
+
+    suspend fun fetchDWStatusesByRoomIds(roomIds: List<Int>): Result<JSONArray> {
+        if (roomIds.isEmpty()) return Result.success(JSONArray())
+        val idsStr = roomIds.joinToString(",")
+        return get("dw_statuses?room_id=in.($idsStr)&select=*")
+    }
 
     suspend fun deleteDWStatusesForRoom(roomId: Int): Result<Unit> =
         delete("dw_statuses?room_id=eq.$roomId")

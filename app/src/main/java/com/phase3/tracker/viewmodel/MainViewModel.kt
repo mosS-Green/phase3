@@ -22,6 +22,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -102,7 +104,200 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         private const val DEBOUNCE_MS = 500L
     }
 
+    private fun saveCache(filename: String, dataStr: String) {
+        try {
+            val file = File(getApplication<Application>().cacheDir, filename)
+            file.writeText(dataStr)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun loadCache(filename: String): String? {
+        return try {
+            val file = File(getApplication<Application>().cacheDir, filename)
+            if (file.exists()) file.readText() else null
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun serializeTowers(towers: List<Tower>): String {
+        val towersArr = JSONArray()
+        for (tower in towers) {
+            val tObj = JSONObject().apply {
+                put("id", tower.id)
+                put("name", tower.name)
+                put("sheet_name", tower.sheetName)
+                
+                val actsArr = JSONArray()
+                for (act in tower.activities) {
+                    val aObj = JSONObject().apply {
+                        put("id", act.id)
+                        put("tower_id", act.towerId)
+                        put("name", act.name)
+                        put("sort_order", act.sortOrder)
+                        put("group_name", act.groupName)
+                        put("group_index", act.groupIndex)
+                        put("contractor", act.contractor)
+                        put("categories", JSONArray(act.categories))
+                        put("use_percentage", act.usePercentage)
+                        put("is_floor_based", act.isFloorBased)
+                        put("weightage", act.weightage)
+                        
+                        val statusesObj = JSONObject()
+                        for ((k, v) in act.statuses) {
+                            statusesObj.put(k.toString(), v.name)
+                        }
+                        put("statuses", statusesObj)
+                        
+                        val percentagesObj = JSONObject()
+                        for ((k, v) in act.percentages) {
+                            percentagesObj.put(k.toString(), v)
+                        }
+                        put("percentages", percentagesObj)
+                    }
+                    actsArr.put(aObj)
+                }
+                put("activities", actsArr)
+            }
+            towersArr.put(tObj)
+        }
+        return towersArr.toString()
+    }
+
+    private fun deserializeTowers(jsonStr: String): List<Tower> {
+        val towersList = mutableListOf<Tower>()
+        val towersArr = JSONArray(jsonStr)
+        for (i in 0 until towersArr.length()) {
+            val tObj = towersArr.getJSONObject(i)
+            val id = tObj.getInt("id")
+            val name = tObj.getString("name")
+            val sheetName = tObj.getString("sheet_name")
+            
+            val actsArr = tObj.getJSONArray("activities")
+            val activities = mutableListOf<Activity>()
+            for (j in 0 until actsArr.length()) {
+                val aObj = actsArr.getJSONObject(j)
+                val actId = aObj.getInt("id")
+                val towerId = aObj.optInt("tower_id", id)
+                val actName = aObj.getString("name")
+                val sortOrder = aObj.getInt("sort_order")
+                val groupName = aObj.getString("group_name")
+                val groupIndex = aObj.getInt("group_index")
+                val contractor = aObj.optString("contractor", "")
+                
+                val catsArr = aObj.getJSONArray("categories")
+                val categories = mutableListOf<String>()
+                for (k in 0 until catsArr.length()) {
+                    categories.add(catsArr.getString(k))
+                }
+                val usePercentage = aObj.getBoolean("use_percentage")
+                val isFloorBased = aObj.getBoolean("is_floor_based")
+                val weightage = aObj.getInt("weightage")
+                
+                val statusesObj = aObj.getJSONObject("statuses")
+                val statuses = mutableMapOf<Int, FlatStatus>()
+                val keys = statusesObj.keys()
+                while (keys.hasNext()) {
+                    val keyStr = keys.next()
+                    val key = keyStr.toInt()
+                    val valStr = statusesObj.getString(keyStr)
+                    statuses[key] = FlatStatus.valueOf(valStr)
+                }
+                
+                val percentagesObj = aObj.optJSONObject("percentages") ?: JSONObject()
+                val percentages = mutableMapOf<Int, Int>()
+                val pKeys = percentagesObj.keys()
+                while (pKeys.hasNext()) {
+                    val keyStr = pKeys.next()
+                    val key = keyStr.toInt()
+                    percentages[key] = percentagesObj.getInt(keyStr)
+                }
+                
+                activities.add(Activity(
+                    id = actId,
+                    towerId = towerId,
+                    name = actName,
+                    sortOrder = sortOrder,
+                    groupName = groupName,
+                    groupIndex = groupIndex,
+                    contractor = contractor,
+                    categories = categories,
+                    usePercentage = usePercentage,
+                    isFloorBased = isFloorBased,
+                    weightage = weightage,
+                    statuses = statuses,
+                    percentages = percentages
+                ))
+            }
+            towersList.add(Tower(
+                id = id,
+                name = name,
+                sheetName = sheetName,
+                activities = activities
+            ))
+        }
+        return towersList
+    }
+
+    private fun serializePendingUpdates(updates: List<PendingStatus>): String {
+        val arr = JSONArray()
+        for (u in updates) {
+            arr.put(JSONObject().apply {
+                put("activityId", u.activityId)
+                put("flatNumber", u.flatNumber)
+                put("status", u.status)
+                put("percentage", u.percentage)
+            })
+        }
+        return arr.toString()
+    }
+
+    private fun deserializePendingUpdates(jsonStr: String): List<PendingStatus> {
+        val list = mutableListOf<PendingStatus>()
+        val arr = JSONArray(jsonStr)
+        for (i in 0 until arr.length()) {
+            val o = arr.getJSONObject(i)
+            list.add(PendingStatus(
+                activityId = o.getInt("activityId"),
+                flatNumber = o.getInt("flatNumber"),
+                status = o.getString("status"),
+                percentage = o.getInt("percentage")
+            ))
+        }
+        return list
+    }
+
     init {
+        // Load from cache first for instant startup
+        val cached = loadCache("towers_cache.json")
+        if (cached != null) {
+            try {
+                _towers.value = deserializeTowers(cached)
+                _isLoading.value = false
+            } catch (e: Exception) {
+                // Ignore, let it load from Supabase
+            }
+        }
+
+        // Load pending sync queue
+        val cachedSync = loadCache("pending_sync.json")
+        if (cachedSync != null) {
+            try {
+                synchronized(pendingLock) {
+                    pendingUpdates.clear()
+                    pendingUpdates.addAll(deserializePendingUpdates(cachedSync))
+                }
+                if (pendingUpdates.isNotEmpty()) {
+                    _isSyncing.value = true
+                    viewModelScope.launch { flushPendingUpdates() }
+                }
+            } catch (e: Exception) {
+                // Ignore
+            }
+        }
+
         loadFromSupabase()
 
         // Auto-resync when connectivity returns
@@ -110,9 +305,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             var wasOffline = !connectivityObserver.isOnline.value
             connectivityObserver.isOnline.collect { online ->
                 if (online && wasOffline) {
-                    // Just came back online — trigger a refresh
+                    // Just came back online — trigger a refresh & flush pending
                     _statusMessage.value = "Back online — syncing…"
                     loadFromSupabase()
+                    if (pendingUpdates.isNotEmpty()) {
+                        viewModelScope.launch { flushPendingUpdates() }
+                    }
                 }
                 wasOffline = !online
             }
@@ -129,76 +327,86 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val towersResult = supabase.fetchTowers()
                 val towerRows = towersResult.getOrThrow()
 
-                val towerList = mutableListOf<Tower>()
-                for (i in 0 until towerRows.length()) {
+                val towerDeferreds = (0 until towerRows.length()).map { i ->
                     val t = towerRows.getJSONObject(i)
                     val towerId = t.getInt("id")
                     val towerName = t.getString("name")
                     val sheetName = t.getString("sheet_name")
 
-                    // Fetch activities for this tower
-                    val activitiesResult = supabase.fetchActivities(towerId)
-                    val activityRows = activitiesResult.getOrThrow()
+                    async {
+                        // Fetch activities and all flat statuses for this tower in parallel
+                        val activitiesDeferred = async { supabase.fetchActivities(towerId).getOrThrow() }
+                        val statusesDeferred = async { supabase.fetchAllFlatStatusesForTower(towerId).getOrThrow() }
 
-                    val activities = mutableListOf<Activity>()
-                    for (j in 0 until activityRows.length()) {
-                        val a = activityRows.getJSONObject(j)
-                        val activityId = a.getInt("id")
+                        val activityRows = activitiesDeferred.await()
+                        val allStatusesRows = statusesDeferred.await()
 
-                        // Fetch flat statuses for this activity
-                        val statusesResult = supabase.fetchFlatStatuses(activityId)
-                        val statusRows = statusesResult.getOrThrow()
-
-                        val statuses = mutableMapOf<Int, FlatStatus>()
-                        val percentages = mutableMapOf<Int, Int>()
-
-                        // Initialize all flats to empty
-                        Activity.FLAT_NUMBERS.forEach { flatNum ->
-                            statuses[flatNum] = FlatStatus.EMPTY
-                            percentages[flatNum] = 0
+                        // Group statuses by activity_id for O(1) lookup
+                        val statusesByActivityId = mutableMapOf<Int, MutableList<JSONObject>>()
+                        for (k in 0 until allStatusesRows.length()) {
+                            val s = allStatusesRows.getJSONObject(k)
+                            val actId = s.getInt("activity_id")
+                            statusesByActivityId.getOrPut(actId) { mutableListOf() }.add(s)
                         }
 
-                        // Fill in actual data from DB
-                        for (k in 0 until statusRows.length()) {
-                            val s = statusRows.getJSONObject(k)
-                            val flatNum = s.getInt("flat_number")
-                            val statusStr = s.getString("status")
-                            val pct = s.getInt("percentage")
+                        val activities = mutableListOf<Activity>()
+                        for (j in 0 until activityRows.length()) {
+                            val a = activityRows.getJSONObject(j)
+                            val activityId = a.getInt("id")
 
-                            statuses[flatNum] = when (statusStr) {
-                                "complete" -> FlatStatus.COMPLETE
-                                "wip" -> FlatStatus.WIP
-                                else -> FlatStatus.EMPTY
+                            val statuses = mutableMapOf<Int, FlatStatus>()
+                            val percentages = mutableMapOf<Int, Int>()
+
+                            // Initialize all flats to empty
+                            Activity.FLAT_NUMBERS.forEach { flatNum ->
+                                statuses[flatNum] = FlatStatus.EMPTY
+                                percentages[flatNum] = 0
                             }
-                            percentages[flatNum] = pct
-                        }
 
-                        val groupName = a.getString("group_name")
-                        val usePercentage = a.getBoolean("use_percentage")
+                            // Fill in actual data from the grouped list
+                            val statusRows = statusesByActivityId[activityId] ?: emptyList()
+                            for (s in statusRows) {
+                                val flatNum = s.getInt("flat_number")
+                                val statusStr = s.getString("status")
+                                val pct = s.getInt("percentage")
 
-                        activities.add(
-                            Activity(
-                                id = activityId,
-                                towerId = towerId,
-                                name = a.getString("name"),
-                                sortOrder = a.getInt("sort_order"),
-                                groupName = groupName,
-                                groupIndex = Activity.groupIndexFor(groupName),
-                                contractor = a.optString("contractor", ""),
-                                categories = Activity.parseCategories(a.optString("categories", "")),
-                                usePercentage = usePercentage,
-                                isFloorBased = a.getBoolean("is_floor_based"),
-                                weightage = a.getInt("weightage"),
-                                statuses = statuses,
-                                percentages = if (usePercentage) percentages else mutableMapOf()
+                                statuses[flatNum] = when (statusStr) {
+                                    "complete" -> FlatStatus.COMPLETE
+                                    "wip" -> FlatStatus.WIP
+                                    else -> FlatStatus.EMPTY
+                                }
+                                percentages[flatNum] = pct
+                            }
+
+                            val groupName = a.getString("group_name")
+                            val usePercentage = a.getBoolean("use_percentage")
+
+                            activities.add(
+                                Activity(
+                                    id = activityId,
+                                    towerId = towerId,
+                                    name = a.getString("name"),
+                                    sortOrder = a.getInt("sort_order"),
+                                    groupName = groupName,
+                                    groupIndex = Activity.groupIndexFor(groupName),
+                                    contractor = a.optString("contractor", ""),
+                                    categories = Activity.parseCategories(a.optString("categories", "")),
+                                    usePercentage = usePercentage,
+                                    isFloorBased = a.getBoolean("is_floor_based"),
+                                    weightage = a.getInt("weightage"),
+                                    statuses = statuses,
+                                    percentages = if (usePercentage) percentages else mutableMapOf()
+                                )
                             )
-                        )
+                        }
+                        Tower(id = towerId, name = towerName, sheetName = sheetName, activities = activities)
                     }
-
-                    towerList.add(Tower(id = towerId, name = towerName, sheetName = sheetName, activities = activities))
                 }
 
+                val towerList = towerDeferreds.awaitAll()
                 _towers.value = towerList
+                saveCache("towers_cache.json", serializeTowers(towerList))
+
                 // Only show the "synced" toast after a background refresh (not the initial load)
                 if (hadDataBefore) {
                     _statusMessage.value = "Synced to latest ✓"
@@ -309,6 +517,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             // Replace any existing update for same activity+flat
             pendingUpdates.removeAll { it.activityId == activityId && it.flatNumber == flatNumber }
             pendingUpdates.add(PendingStatus(activityId, flatNumber, status, percentage))
+            saveCache("pending_sync.json", serializePendingUpdates(pendingUpdates))
         }
         _isSyncing.value = true
         _syncDone.value = false
@@ -321,21 +530,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun flushPendingUpdates() {
-        val updates: List<PendingStatus>
+        val updatesToSend: List<PendingStatus>
         synchronized(pendingLock) {
-            updates = pendingUpdates.toList()
-            pendingUpdates.clear()
+            updatesToSend = pendingUpdates.toList()
         }
 
-        if (updates.isEmpty()) {
+        if (updatesToSend.isEmpty()) {
             _isSyncing.value = false
             return
         }
 
-        withContext(NonCancellable + Dispatchers.IO) {
+        _isSyncing.value = true
+        _syncDone.value = false
+
+        val success = withContext(NonCancellable + Dispatchers.IO) {
             try {
                 val jsonArray = JSONArray()
-                for (u in updates) {
+                for (u in updatesToSend) {
                     jsonArray.put(JSONObject().apply {
                         put("activity_id", u.activityId)
                         put("flat_number", u.flatNumber)
@@ -345,19 +556,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 val result = supabase.upsertFlatStatuses(jsonArray)
-                if (result.isFailure) {
+                if (result.isSuccess) {
+                    true
+                } else {
                     _statusMessage.value = "Sync failed: ${result.exceptionOrNull()?.message}"
+                    false
                 }
             } catch (e: Exception) {
                 _statusMessage.value = "Sync error: ${e.message}"
-            } finally {
-                _isSyncing.value = false
-                _syncDone.value = true
-                viewModelScope.launch {
-                    delay(3000)
-                    _syncDone.value = false
-                }
+                false
             }
+        }
+
+        if (success) {
+            synchronized(pendingLock) {
+                // Remove only the updates we successfully sent
+                pendingUpdates.removeAll { item ->
+                    updatesToSend.any { sent ->
+                        sent.activityId == item.activityId &&
+                        sent.flatNumber == item.flatNumber &&
+                        sent.status == item.status &&
+                        sent.percentage == item.percentage
+                    }
+                }
+                saveCache("pending_sync.json", serializePendingUpdates(pendingUpdates))
+            }
+            _isSyncing.value = false
+            _syncDone.value = true
+            viewModelScope.launch {
+                delay(3000)
+                _syncDone.value = false
+            }
+        } else {
+            _isSyncing.value = false
         }
     }
 
