@@ -36,6 +36,13 @@ fun DWFlatScreen(
     val isDark = isSystemInDarkTheme()
     val completeColor = if (isDark) StatusCompleteDark else StatusComplete
 
+    // Filter rooms to only include those that have at least one type assigned to this specific flat
+    val filteredRooms = remember(rooms, flatNumber) {
+        rooms.filter { room ->
+            room.types.any { type -> room.flatStatuses[flatNumber]?.containsKey(type.id) == true }
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -61,7 +68,7 @@ fun DWFlatScreen(
         },
         containerColor = MaterialTheme.colorScheme.surface
     ) { padding ->
-        if (rooms.isEmpty() || rooms.all { it.types.isEmpty() }) {
+        if (filteredRooms.isEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -69,7 +76,7 @@ fun DWFlatScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    "No rooms defined yet.\nAdd rooms from the column screen.",
+                    "No room + door types configured for this flat.",
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -83,14 +90,12 @@ fun DWFlatScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 contentPadding = PaddingValues(top = 8.dp, bottom = 16.dp)
             ) {
-                items(rooms, key = { it.id }) { room ->
-                    if (room.types.isNotEmpty()) {
-                        DWRoomCard(
-                            room = room,
-                            flatNumber = flatNumber,
-                            onToggle = { typeId -> onToggleStatus(room.id, typeId) }
-                        )
-                    }
+                items(filteredRooms, key = { it.id }) { room ->
+                    DWRoomCard(
+                        room = room,
+                        flatNumber = flatNumber,
+                        onToggle = { typeId -> onToggleStatus(room.id, typeId) }
+                    )
                 }
             }
         }
@@ -141,7 +146,11 @@ private fun DWRoomCard(
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
 
             // Type items
-            room.types.forEach { type ->
+            val assignedTypes = remember(room, flatNumber) {
+                room.types.filter { type -> room.flatStatuses[flatNumber]?.containsKey(type.id) == true }
+            }
+
+            assignedTypes.forEach { type ->
                 val isDone = room.flatStatuses[flatNumber]?.get(type.id) ?: false
                 val bgColor by animateColorAsState(
                     targetValue = if (isDone) {

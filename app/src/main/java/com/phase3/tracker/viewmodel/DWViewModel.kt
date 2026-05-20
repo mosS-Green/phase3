@@ -321,15 +321,18 @@ class DWViewModel(application: Application) : AndroidViewModel(application) {
         var totalWeight = 0
         var doneWeight = 0
         for (room in roomList) {
+            val statusMap = room.flatStatuses[flatNumber] ?: continue
             for (type in room.types) {
+                if (!statusMap.containsKey(type.id)) continue
                 val w = if (type.isDoor) 3 else 1
                 totalWeight += w
-                val isDone = room.flatStatuses[flatNumber]?.get(type.id) ?: false
+                val isDone = statusMap[type.id] ?: false
                 if (isDone) doneWeight += w
             }
         }
         return if (totalWeight == 0) 0f else doneWeight.toFloat() / totalWeight * 100f
     }
+
 
     /** Overall column completion across all 132 flats */
     fun columnCompletion(): Float {
@@ -920,10 +923,12 @@ class DWViewModel(application: Application) : AndroidViewModel(application) {
             var totalWeight = 0
             var doneWeight = 0
             for (room in roomsToUse) {
+                val statusMap = room.flatStatuses[flatNum] ?: continue
                 for (type in room.types) {
+                    if (!statusMap.containsKey(type.id)) continue
                     val w = if (type.isDoor) 3 else 1
                     totalWeight += w
-                    val isDone = room.flatStatuses[flatNum]?.get(type.id) ?: false
+                    val isDone = statusMap[type.id] ?: false
                     if (isDone) doneWeight += w
                 }
             }

@@ -22,6 +22,7 @@ data class DWRoom(
         var totalWeight = 0
         var doneWeight = 0
         for (type in types) {
+            if (!statusMap.containsKey(type.id)) continue
             val weight = if (type.isDoor) 3 else 1
             totalWeight += weight
             if (statusMap[type.id] == true) doneWeight += weight
@@ -29,3 +30,4 @@ data class DWRoom(
         return if (totalWeight == 0) 0f else doneWeight.toFloat() / totalWeight * 100f
     }
 }
+
