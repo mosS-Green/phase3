@@ -257,12 +257,15 @@ class DWViewModel(application: Application) : AndroidViewModel(application) {
 
         val roomIds = (0 until roomRows.length()).map { roomRows.getJSONObject(it).getInt("id") }
 
-        // Fetch assigned types and statuses in parallel using coroutines
+        // Fetch assigned types in batch (small dataset, safe under row limit)
+        // and statuses per-room in parallel (each room ~132×N rows, safe under limit)
         val roomTypesDeferred = viewModelScope.async { supabase.fetchDWRoomTypesByRoomIds(roomIds).getOrElse { JSONArray() } }
-        val statusesDeferred = viewModelScope.async { supabase.fetchDWStatusesByRoomIds(roomIds).getOrElse { JSONArray() } }
+        val statusDeferreds = roomIds.map { roomId ->
+            viewModelScope.async { roomId to supabase.fetchDWStatuses(roomId).getOrElse { JSONArray() } }
+        }
 
         val rtRows = roomTypesDeferred.await()
-        val stRows = statusesDeferred.await()
+        val statusResults = statusDeferreds.map { it.await() }
 
         // Group types by room_id
         val typesByRoomId = mutableMapOf<Int, MutableList<DWType>>()
@@ -283,14 +286,15 @@ class DWViewModel(application: Application) : AndroidViewModel(application) {
 
         // Group statuses by room_id and then flat_number and type_id
         val statusesByRoomId = mutableMapOf<Int, MutableMap<Int, MutableMap<Int, Boolean>>>()
-        for (i in 0 until stRows.length()) {
-            val s = stRows.getJSONObject(i)
-            val roomId = s.getInt("room_id")
-            val flatNum = s.getInt("flat_number")
-            val typeId = s.getInt("type_id")
-            val isDone = s.getBoolean("is_done")
-            statusesByRoomId.getOrPut(roomId) { mutableMapOf() }
-                .getOrPut(flatNum) { mutableMapOf() }[typeId] = isDone
+        for ((roomId, stRows) in statusResults) {
+            for (i in 0 until stRows.length()) {
+                val s = stRows.getJSONObject(i)
+                val flatNum = s.getInt("flat_number")
+                val typeId = s.getInt("type_id")
+                val isDone = s.getBoolean("is_done")
+                statusesByRoomId.getOrPut(roomId) { mutableMapOf() }
+                    .getOrPut(flatNum) { mutableMapOf() }[typeId] = isDone
+            }
         }
 
         for (i in 0 until roomRows.length()) {

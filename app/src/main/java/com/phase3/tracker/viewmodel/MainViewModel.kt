@@ -334,19 +334,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val sheetName = t.getString("sheet_name")
 
                     async {
-                        // Fetch activities and all flat statuses for this tower in parallel
-                        val activitiesDeferred = async { supabase.fetchActivities(towerId).getOrThrow() }
-                        val statusesDeferred = async { supabase.fetchAllFlatStatusesForTower(towerId).getOrThrow() }
+                        // Fetch activities first
+                        val activityRows = supabase.fetchActivities(towerId).getOrThrow()
 
-                        val activityRows = activitiesDeferred.await()
-                        val allStatusesRows = statusesDeferred.await()
+                        // Fetch flat statuses per-activity in parallel
+                        // (each returns ~132 rows, safely under PostgREST's 1000-row default limit)
+                        val statusDeferreds = (0 until activityRows.length()).map { j ->
+                            val activityId = activityRows.getJSONObject(j).getInt("id")
+                            async { activityId to supabase.fetchFlatStatuses(activityId).getOrElse { JSONArray() } }
+                        }
 
                         // Group statuses by activity_id for O(1) lookup
                         val statusesByActivityId = mutableMapOf<Int, MutableList<JSONObject>>()
-                        for (k in 0 until allStatusesRows.length()) {
-                            val s = allStatusesRows.getJSONObject(k)
-                            val actId = s.getInt("activity_id")
-                            statusesByActivityId.getOrPut(actId) { mutableListOf() }.add(s)
+                        for ((actId, stRows) in statusDeferreds.awaitAll()) {
+                            val list = mutableListOf<JSONObject>()
+                            for (k in 0 until stRows.length()) {
+                                list.add(stRows.getJSONObject(k))
+                            }
+                            statusesByActivityId[actId] = list
                         }
 
                         val activities = mutableListOf<Activity>()

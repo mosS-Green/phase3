@@ -46,7 +46,7 @@ class SupabaseClient {
 
     /** Fetch ALL flat statuses for a tower in one call (join through activities) */
     suspend fun fetchAllFlatStatusesForTower(towerId: Int): Result<JSONArray> =
-        get("flat_statuses?select=*,activities!inner(tower_id)&activities.tower_id=eq.$towerId")
+        get("flat_statuses?select=*,activities!inner(tower_id)&activities.tower_id=eq.$towerId&limit=50000")
 
     // ── POST / UPSERT ───────────────────────────────────────────────
 
@@ -111,7 +111,7 @@ class SupabaseClient {
     suspend fun fetchDWRoomTypesByRoomIds(roomIds: List<Int>): Result<JSONArray> {
         if (roomIds.isEmpty()) return Result.success(JSONArray())
         val idsStr = roomIds.joinToString(",")
-        return get("dw_room_types?room_id=in.($idsStr)&select=*,dw_types(*)")
+        return get("dw_room_types?room_id=in.($idsStr)&select=*,dw_types(*)&limit=50000")
     }
 
     suspend fun insertDWRoomType(payload: JSONObject): Result<JSONArray> =
@@ -145,7 +145,7 @@ class SupabaseClient {
     suspend fun fetchDWStatusesByRoomIds(roomIds: List<Int>): Result<JSONArray> {
         if (roomIds.isEmpty()) return Result.success(JSONArray())
         val idsStr = roomIds.joinToString(",")
-        return get("dw_statuses?room_id=in.($idsStr)&select=*")
+        return get("dw_statuses?room_id=in.($idsStr)&select=*&limit=50000")
     }
 
     suspend fun deleteDWStatusesForRoom(roomId: Int): Result<Unit> =
