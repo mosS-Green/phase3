@@ -154,6 +154,18 @@ class SupabaseClient {
     suspend fun upsertDWStatuses(statuses: JSONArray): Result<JSONArray> =
         post("dw_statuses", statuses.toString(), prefer = "return=minimal,resolution=merge-duplicates")
 
+    // ══════════════════════════════════════════════════════════════════
+    // Pre Hung Doors
+    // ══════════════════════════════════════════════════════════════════
+
+    /** Fetch all PHD statuses for a tower */
+    suspend fun fetchPHDStatuses(towerId: Int): Result<JSONArray> =
+        get("phd_statuses?tower_id=eq.$towerId&select=*")
+
+    /** Batch upsert PHD statuses (uses composite unique key for conflict resolution) */
+    suspend fun upsertPHDStatuses(statuses: JSONArray): Result<JSONArray> =
+        post("phd_statuses", statuses.toString(), prefer = "return=minimal,resolution=merge-duplicates")
+
     // ── Core HTTP helpers ────────────────────────────────────────────
 
     private suspend fun get(path: String): Result<JSONArray> = withContext(Dispatchers.IO) {

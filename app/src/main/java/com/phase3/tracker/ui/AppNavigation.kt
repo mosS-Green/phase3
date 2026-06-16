@@ -39,9 +39,11 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.phase3.tracker.model.PHDDoorConfig
 import com.phase3.tracker.ui.screens.*
 import com.phase3.tracker.viewmodel.DWViewModel
 import com.phase3.tracker.viewmodel.MainViewModel
+import com.phase3.tracker.viewmodel.PHDViewModel
 
 sealed class Screen(val route: String) {
     data object Home : Screen("home")
@@ -63,6 +65,17 @@ sealed class Screen(val route: String) {
     // Unit Type screen
     data object UnitType : Screen("unit_type/{towerIndex}/{unitDigit}") {
         fun createRoute(towerIndex: Int, unitDigit: Int) = "unit_type/$towerIndex/$unitDigit"
+    }
+    // PHD screens
+    data object PHDHome : Screen("phd_home")
+    data object PHDTower : Screen("phd_tower/{towerIndex}") {
+        fun createRoute(towerIndex: Int) = "phd_tower/$towerIndex"
+    }
+    data object PHDFlat : Screen("phd_flat/{towerIndex}/{flatNumber}") {
+        fun createRoute(towerIndex: Int, flatNumber: Int) = "phd_flat/$towerIndex/$flatNumber"
+    }
+    data object PHDUnitType : Screen("phd_unit_type/{towerIndex}/{unitDigit}") {
+        fun createRoute(towerIndex: Int, unitDigit: Int) = "phd_unit_type/$towerIndex/$unitDigit"
     }
 }
 
@@ -88,9 +101,15 @@ fun AppNavigation(viewModel: MainViewModel) {
     val dwIsImporting by dwViewModel.isImporting.collectAsStateWithLifecycle()
     val allTowerRooms by dwViewModel.allTowerRooms.collectAsStateWithLifecycle()
 
+    val phdViewModel: PHDViewModel = viewModel()
+    val phdStatuses by phdViewModel.phdStatuses.collectAsStateWithLifecycle()
+    val phdIsLoading by phdViewModel.isLoading.collectAsStateWithLifecycle()
+    val phdIsSyncing by phdViewModel.isSyncing.collectAsStateWithLifecycle()
+
     val context = LocalContext.current
 
     val dwStatusMessage by dwViewModel.statusMessage.collectAsStateWithLifecycle()
+    val phdStatusMessage by phdViewModel.statusMessage.collectAsStateWithLifecycle()
     val mainStatusMessage by viewModel.statusMessage.collectAsStateWithLifecycle()
 
     // Snackbar for main status messages
@@ -99,6 +118,12 @@ fun AppNavigation(viewModel: MainViewModel) {
         if (!mainStatusMessage.isNullOrBlank()) {
             snackbarHostState.showSnackbar(mainStatusMessage!!)
             viewModel.clearStatusMessage()
+        }
+    }
+    LaunchedEffect(phdStatusMessage) {
+        if (!phdStatusMessage.isNullOrBlank()) {
+            snackbarHostState.showSnackbar(phdStatusMessage!!)
+            phdViewModel.clearStatusMessage()
         }
     }
 
@@ -207,6 +232,7 @@ fun AppNavigation(viewModel: MainViewModel) {
                         viewModel.refreshFromSupabase()
                     },
                     onDWClick = { navController.navigate(Screen.DWHome.route) },
+                    onPHDClick = { navController.navigate(Screen.PHDHome.route) },
                     onBack = { navController.popBackStack() }
                 )
             }
@@ -387,11 +413,114 @@ fun AppNavigation(viewModel: MainViewModel) {
                     )
                 }
             }
+
+            // ── PHD Screens ────────────────────────────────────────
+
+            composable(Screen.PHDHome.route) {
+                PHDHomeScreen(
+                    towers = towers,
+                    onTowerClick = { towerIndex ->
+                        navController.navigate(Screen.PHDTower.createRoute(towerIndex))
+                    },
+                    onUnitTypeClick = { towerIndex, unitDigit ->
+                        navController.navigate(Screen.PHDUnitType.createRoute(towerIndex, unitDigit))
+                    },
+                    onBack = { navController.popBackStack() }
+                )
+            }
+
+            composable(
+                route = Screen.PHDTower.route,
+                arguments = listOf(navArgument("towerIndex") { type = NavType.IntType })
+            ) { backStackEntry ->
+                val towerIndex = backStackEntry.arguments?.getInt("towerIndex") ?: 0
+                val tower = towers.getOrNull(towerIndex)
+
+                if (tower != null) {
+                    LaunchedEffect(tower.id) {
+                        phdViewModel.loadStatuses(tower.id)
+                    }
+
+                    PHDTowerScreen(
+                        towerName = tower.name,
+                        isLoading = phdIsLoading,
+                        flatCompletion = { flatNumber ->
+                            phdViewModel.flatCompletion(flatNumber, tower.sheetName)
+                        },
+                        onFlatClick = { flatNumber ->
+                            navController.navigate(Screen.PHDFlat.createRoute(towerIndex, flatNumber))
+                        },
+                        onBack = { navController.popBackStack() }
+                    )
+                }
+            }
+
+            composable(
+                route = Screen.PHDFlat.route,
+                arguments = listOf(
+                    navArgument("towerIndex") { type = NavType.IntType },
+                    navArgument("flatNumber") { type = NavType.IntType }
+                )
+            ) { backStackEntry ->
+                val towerIndex = backStackEntry.arguments?.getInt("towerIndex") ?: 0
+                val flatNumber = backStackEntry.arguments?.getInt("flatNumber") ?: 0
+                val tower = towers.getOrNull(towerIndex)
+
+                if (tower != null) {
+                    val unitDigit = flatNumber % 100
+                    val doorTypes = PHDDoorConfig.getDoorTypes(tower.sheetName, unitDigit)
+                    val flatMap = phdStatuses[flatNumber] ?: emptyMap()
+
+                    PHDFlatScreen(
+                        flatNumber = flatNumber,
+                        towerName = tower.name,
+                        doorTypes = doorTypes,
+                        statuses = flatMap,
+                        flatCompletion = phdViewModel.flatCompletion(flatNumber, tower.sheetName),
+                        onToggle = { doorType ->
+                            phdViewModel.toggleStatus(tower.id, flatNumber, doorType)
+                        },
+                        onBack = { navController.popBackStack() }
+                    )
+                }
+            }
+
+            composable(
+                route = Screen.PHDUnitType.route,
+                arguments = listOf(
+                    navArgument("towerIndex") { type = NavType.IntType },
+                    navArgument("unitDigit") { type = NavType.IntType }
+                )
+            ) { backStackEntry ->
+                val towerIndex = backStackEntry.arguments?.getInt("towerIndex") ?: 0
+                val unitDigit = backStackEntry.arguments?.getInt("unitDigit") ?: 1
+                val tower = towers.getOrNull(towerIndex)
+
+                if (tower != null) {
+                    LaunchedEffect(tower.id) {
+                        phdViewModel.loadStatuses(tower.id)
+                    }
+
+                    val doorTypes = PHDDoorConfig.getDoorTypes(tower.sheetName, unitDigit)
+
+                    PHDUnitTypeScreen(
+                        towerName = tower.name,
+                        unitDigit = unitDigit,
+                        doorTypes = doorTypes,
+                        statuses = phdStatuses,
+                        isLoading = phdIsLoading,
+                        onToggle = { flatNumber, doorType ->
+                            phdViewModel.toggleStatus(tower.id, flatNumber, doorType)
+                        },
+                        onBack = { navController.popBackStack() }
+                    )
+                }
+            }
         }
 
         // ── Persistent global sync indicator ────────────────────────
         GlobalSyncIndicator(
-            isSyncing = isSyncing || dwIsSyncing,
+            isSyncing = isSyncing || dwIsSyncing || phdIsSyncing,
             syncDone = syncDone,
             isDownloading = isDownloading,
             isOffline = !isOnline,
