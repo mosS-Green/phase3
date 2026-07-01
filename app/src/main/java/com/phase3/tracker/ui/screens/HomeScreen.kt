@@ -448,25 +448,22 @@ fun HomeScreen(
                     }
                 }
 
-                // ── Edit / Data FAB (primary) ───────────────────
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    shadowElevation = 6.dp,
-                    tonalElevation = 6.dp,
-                    modifier = Modifier
-                        .combinedClickable(
-                            onClick = onNavigateToData,
-                            onLongClick = onNavigateToQSI
-                        )
+                // ── QSI Dashboard FAB ───────────────────────────
+                SmallFloatingActionButton(
+                    onClick = onNavigateToQSI,
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
                 ) {
-                    Box(
-                        modifier = Modifier.size(56.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(Icons.Default.Edit, contentDescription = "Data")
-                    }
+                    Icon(Icons.Default.Analytics, contentDescription = "QSI Dashboard")
+                }
+
+                // ── Edit / Data FAB (primary) ───────────────────
+                FloatingActionButton(
+                    onClick = onNavigateToData,
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                ) {
+                    Icon(Icons.Default.Edit, contentDescription = "Data")
                 }
             }
         },
