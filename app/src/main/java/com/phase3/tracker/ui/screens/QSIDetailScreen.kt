@@ -6,6 +6,7 @@ import androidx.compose.animation.*
 import com.phase3.tracker.ui.captureAndShareScreen
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.foundation.background
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn

@@ -201,7 +201,34 @@ class QSIViewModel(application: Application) : AndroidViewModel(application) {
     private val _metrics = MutableStateFlow<QSIMetrics?>(null)
     val metrics: StateFlow<QSIMetrics?> = _metrics.asStateFlow()
 
-    private val client = OkHttpClient.Builder()
+    private fun getUnsafeOkHttpClientBuilder(): OkHttpClient.Builder {
+        try {
+            val trustAllCerts = arrayOf<javax.net.ssl.TrustManager>(
+                object : javax.net.ssl.X509TrustManager {
+                    @Throws(java.security.cert.CertificateException::class)
+                    override fun checkClientTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {}
+
+                    @Throws(java.security.cert.CertificateException::class)
+                    override fun checkServerTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {}
+
+                    override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = arrayOf()
+                }
+            )
+
+            val sslContext = javax.net.ssl.SSLContext.getInstance("SSL")
+            sslContext.init(null, trustAllCerts, java.security.SecureRandom())
+            val sslSocketFactory = sslContext.socketFactory
+
+            val builder = OkHttpClient.Builder()
+            builder.sslSocketFactory(sslSocketFactory, trustAllCerts[0] as javax.net.ssl.X509TrustManager)
+            builder.hostnameVerifier { _, _ -> true }
+            return builder
+        } catch (e: Exception) {
+            return OkHttpClient.Builder()
+        }
+    }
+
+    private val client = getUnsafeOkHttpClientBuilder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .build()

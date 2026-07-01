@@ -4,6 +4,10 @@ import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import com.phase3.tracker.ui.captureAndShareScreen
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -37,6 +41,10 @@ fun QSIDashboardScreen(
     onNavigateToDetail: (String) -> Unit,
     onBack: () -> Unit
 ) {
+    val context = LocalContext.current
+    val view = LocalView.current
+    val scope = rememberCoroutineScope()
+
     val botToken by qsiViewModel.botToken.collectAsStateWithLifecycle()
     val chatId by qsiViewModel.chatId.collectAsStateWithLifecycle()
     val selectedMonth by qsiViewModel.selectedMonth.collectAsStateWithLifecycle()
@@ -76,6 +84,13 @@ fun QSIDashboardScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = {
+                        scope.launch {
+                            captureAndShareScreen(context, view, "QSI_Dashboard_${metrics?.currMONName ?: ""}")
+                        }
+                    }) {
+                        Icon(Icons.Default.CameraAlt, contentDescription = "Capture Dashboard")
+                    }
                     IconButton(onClick = { showMonthSelector = true }) {
                         Icon(Icons.Default.Settings, contentDescription = "Change Period / Source")
                     }
@@ -369,6 +384,10 @@ fun RatingBox(rating: Float, maxRating: Int = 5) {
 
 @Composable
 fun RedIsGoodPanel(metrics: QSIMetrics, onClick: () -> Unit) {
+    val context = LocalContext.current
+    val view = LocalView.current
+    val scope = rememberCoroutineScope()
+
     ElevatedCard(
         modifier = Modifier
             .fillMaxWidth()
@@ -393,6 +412,17 @@ fun RedIsGoodPanel(metrics: QSIMetrics, onClick: () -> Unit) {
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("1. Red is Good", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    IconButton(
+                        onClick = {
+                            scope.launch {
+                                captureAndShareScreen(context, view, "QSI_RedIsGood")
+                            }
+                        },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(Icons.Default.CameraAlt, contentDescription = "Capture Panel", modifier = Modifier.size(16.dp))
+                    }
                 }
                 SuggestionChip(
                     onClick = {},
@@ -506,6 +536,10 @@ fun DisciplinePanel(
     onFncpChange: (Int) -> Unit,
     onNavigateToDetail: (String) -> Unit
 ) {
+    val context = LocalContext.current
+    val view = LocalView.current
+    val scope = rememberCoroutineScope()
+
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp)
@@ -526,6 +560,17 @@ fun DisciplinePanel(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("2. Discipline", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.width(4.dp))
+                IconButton(
+                    onClick = {
+                        scope.launch {
+                            captureAndShareScreen(context, view, "QSI_Discipline")
+                        }
+                    },
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(Icons.Default.CameraAlt, contentDescription = "Capture Panel", modifier = Modifier.size(16.dp))
+                }
             }
             Text(
                 "NC approvals for issues created on/before 25th of ${metrics.prevMONName}.",
@@ -616,6 +661,10 @@ fun DisciplinePanel(
 
 @Composable
 fun PromptnessPanel(metrics: QSIMetrics) {
+    val context = LocalContext.current
+    val view = LocalView.current
+    val scope = rememberCoroutineScope()
+
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp)
@@ -636,6 +685,17 @@ fun PromptnessPanel(metrics: QSIMetrics) {
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("3. Promptness", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.width(4.dp))
+                IconButton(
+                    onClick = {
+                        scope.launch {
+                            captureAndShareScreen(context, view, "QSI_Promptness")
+                        }
+                    },
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(Icons.Default.CameraAlt, contentDescription = "Capture Panel", modifier = Modifier.size(16.dp))
+                }
             }
 
             RatingBox(rating = metrics.ratingPromptness)
@@ -678,6 +738,10 @@ fun PMQHourPanel(
     onHolidaysChange: (Int) -> Unit,
     onRefresh: () -> Unit
 ) {
+    val context = LocalContext.current
+    val view = LocalView.current
+    val scope = rememberCoroutineScope()
+
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp)
@@ -700,6 +764,17 @@ fun PMQHourPanel(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("4. PM Q-hour", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    IconButton(
+                        onClick = {
+                            scope.launch {
+                                captureAndShareScreen(context, view, "QSI_PMQHour")
+                            }
+                        },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(Icons.Default.CameraAlt, contentDescription = "Capture Panel", modifier = Modifier.size(16.dp))
+                    }
                 }
                 IconButton(onClick = onRefresh) {
                     Icon(Icons.Default.Refresh, contentDescription = "Refresh API Data", tint = Color(0xFF6A1B9A))
@@ -783,6 +858,10 @@ fun MetricValuePanel(
     themeColor: Color,
     onClick: (() -> Unit)? = null
 ) {
+    val context = LocalContext.current
+    val view = LocalView.current
+    val scope = rememberCoroutineScope()
+
     ElevatedCard(
         modifier = Modifier
             .fillMaxWidth()
@@ -798,7 +877,20 @@ fun MetricValuePanel(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = themeColor)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = themeColor)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    IconButton(
+                        onClick = {
+                            scope.launch {
+                                captureAndShareScreen(context, view, title.replace(Regex("[^a-zA-Z0-9]"), "_"))
+                            }
+                        },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(Icons.Default.CameraAlt, contentDescription = "Capture Panel", modifier = Modifier.size(16.dp))
+                    }
+                }
                 if (onClick != null) {
                     Icon(Icons.Default.ChevronRight, contentDescription = null, tint = themeColor)
                 }
@@ -844,6 +936,8 @@ fun AgeBracketRow(label: String, count: Int, total: Int, color: Color) {
 
 @Composable
 fun StepperInput(label: String, value: Int, onValueChange: (Int) -> Unit, modifier: Modifier = Modifier) {
+    var textValue by remember(value) { mutableStateOf(value.toString()) }
+
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(8.dp))
@@ -857,7 +951,39 @@ fun StepperInput(label: String, value: Int, onValueChange: (Int) -> Unit, modifi
             IconButton(onClick = { onValueChange(value - 1) }, modifier = Modifier.size(24.dp)) {
                 Icon(Icons.Default.Remove, contentDescription = null, modifier = Modifier.size(16.dp))
             }
-            Text("$value", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 8.dp))
+            
+            Box(
+                modifier = Modifier
+                    .width(44.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.8f))
+                    .padding(vertical = 2.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                androidx.compose.foundation.text.BasicTextField(
+                    value = textValue,
+                    onValueChange = { newValue ->
+                        val filtered = newValue.filter { it.isDigit() }
+                        textValue = filtered
+                        val intVal = filtered.toIntOrNull()
+                        if (intVal != null) {
+                            onValueChange(intVal)
+                        } else if (filtered.isEmpty()) {
+                            onValueChange(0)
+                        }
+                    },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    textStyle = LocalTextStyle.current.copy(
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        textAlign = TextAlign.Center,
+                        fontSize = 14.sp
+                    ),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
             IconButton(onClick = { onValueChange(value + 1) }, modifier = Modifier.size(24.dp)) {
                 Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
             }
@@ -1029,6 +1155,10 @@ fun MonthSelectorBottomSheet(
 
 @Composable
 fun RedIsGoodDetailsDialog(metrics: QSIMetrics, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val view = LocalView.current
+    val scope = rememberCoroutineScope()
+
     val creatorGroups = remember(metrics.panel1Rows) {
         metrics.panel1Rows
             .groupBy { it["NC created By"] ?: it["Updated By"] ?: "Unknown" }
@@ -1038,7 +1168,22 @@ fun RedIsGoodDetailsDialog(metrics: QSIMetrics, onDismiss: () -> Unit) {
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Red is Good Summary", fontWeight = FontWeight.Bold) },
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Red is Good Summary", fontWeight = FontWeight.Bold)
+                IconButton(onClick = {
+                    scope.launch {
+                        captureAndShareScreen(context, view, "QSI_RedIsGood_Summary")
+                    }
+                }) {
+                    Icon(Icons.Default.CameraAlt, contentDescription = "Capture Dialog")
+                }
+            }
+        },
         text = {
             Column(modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp)) {
                 Text(
