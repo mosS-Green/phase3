@@ -3,6 +3,8 @@ package com.phase3.tracker.ui.screens
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.animation.*
+import com.phase3.tracker.ui.captureAndShareScreen
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -35,6 +37,8 @@ fun QSIDetailScreen(
 ) {
     val metrics by qsiViewModel.metrics.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val view = LocalView.current
+    val scope = rememberCoroutineScope()
 
     var ageFilter by remember { mutableStateOf("all") } // "all", "lte20", "gt20", "gt35"
     var selectedNcDetail by remember { mutableStateOf<Map<String, String>?>(null) }
@@ -96,6 +100,15 @@ fun QSIDetailScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = {
+                        scope.launch {
+                            captureAndShareScreen(context, view, title)
+                        }
+                    }) {
+                        Icon(Icons.Default.CameraAlt, contentDescription = "Capture Detail")
                     }
                 }
             )

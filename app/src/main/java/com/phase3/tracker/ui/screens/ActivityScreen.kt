@@ -1,5 +1,6 @@
 package com.phase3.tracker.ui.screens
 
+import com.phase3.tracker.ui.captureAndShareScreen
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
@@ -605,65 +606,6 @@ private fun PercentageCell(
             ),
             textAlign = TextAlign.Center
         )
-    }
-}
-
-private suspend fun captureAndShareScreen(context: Context, view: View, activityName: String) {
-    withContext(Dispatchers.IO) {
-        try {
-            // Capture the current view
-            val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
-            val canvas = Canvas(bitmap)
-            view.draw(canvas)
-
-            // Save to cache dir for sharing
-            val fileName = "Phase3_${activityName.replace(Regex("[^a-zA-Z0-9]"), "_")}_${System.currentTimeMillis()}.png"
-            val cacheDir = File(context.cacheDir, "snapshots")
-            cacheDir.mkdirs()
-            val file = File(cacheDir, fileName)
-            FileOutputStream(file).use { out ->
-                bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
-            }
-
-            // Also save to gallery
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val contentValues = ContentValues().apply {
-                    put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
-                    put(MediaStore.Images.Media.MIME_TYPE, "image/png")
-                    put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/Phase3")
-                }
-                context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)?.let { uri ->
-                    context.contentResolver.openOutputStream(uri)?.use { out ->
-                        bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
-                    }
-                }
-            }
-
-            bitmap.recycle()
-
-            // Share via intent
-            withContext(Dispatchers.Main) {
-                try {
-                    val uri = FileProvider.getUriForFile(
-                        context,
-                        "${context.packageName}.fileprovider",
-                        file
-                    )
-                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                        type = "image/png"
-                        putExtra(Intent.EXTRA_STREAM, uri)
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    }
-                    context.startActivity(Intent.createChooser(shareIntent, "Share Snapshot"))
-                } catch (e: Exception) {
-                    Toast.makeText(context, "Saved to gallery", Toast.LENGTH_SHORT).show()
-                }
-            }
-        } catch (e: Exception) {
-            withContext(Dispatchers.Main) {
-                Toast.makeText(context, "Snapshot failed: ${e.message}", Toast.LENGTH_SHORT).show()
-            }
-        }
     }
 }
 
