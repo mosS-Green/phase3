@@ -449,18 +449,24 @@ fun HomeScreen(
                 }
 
                 // ── Edit / Data FAB (primary) ───────────────────
-                FloatingActionButton(
-                    onClick = {},
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer,
                     contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    shadowElevation = 6.dp,
+                    tonalElevation = 6.dp,
                     modifier = Modifier
-                        .clip(RoundedCornerShape(16.dp))
                         .combinedClickable(
                             onClick = onNavigateToData,
                             onLongClick = onNavigateToQSI
                         )
                 ) {
-                    Icon(Icons.Default.Edit, contentDescription = "Data")
+                    Box(
+                        modifier = Modifier.size(56.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Default.Edit, contentDescription = "Data")
+                    }
                 }
             }
         },
