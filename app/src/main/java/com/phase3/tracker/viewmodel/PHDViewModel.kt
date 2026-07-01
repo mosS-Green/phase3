@@ -1,12 +1,18 @@
 package com.phase3.tracker.viewmodel
 
 import android.app.Application
+import android.content.ContentValues
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.phase3.tracker.data.ConnectivityObserver
 import com.phase3.tracker.data.SupabaseClient
 import com.phase3.tracker.model.Activity
 import com.phase3.tracker.model.PHDDoorConfig
+import com.phase3.tracker.model.Tower
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -16,14 +22,25 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.apache.poi.ss.usermodel.BorderStyle
+import org.apache.poi.ss.usermodel.FillPatternType
+import org.apache.poi.ss.usermodel.HorizontalAlignment
+import org.apache.poi.ss.usermodel.IndexedColors
+import org.apache.poi.xssf.usermodel.XSSFCellStyle
+import org.apache.poi.xssf.usermodel.XSSFColor
+import org.apache.poi.xssf.usermodel.XSSFWorkbook
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.InputStream
 
 class PHDViewModel(application: Application) : AndroidViewModel(application) {
 
     private val supabase = SupabaseClient()
     private val connectivityObserver = ConnectivityObserver(application)
+
+    private val _isImporting = MutableStateFlow(false)
+    val isImporting: StateFlow<Boolean> = _isImporting.asStateFlow()
 
     /**
      * PHD statuses: towerId → (flatNumber → (doorType → isDone))
@@ -307,6 +324,242 @@ class PHDViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun clearStatusMessage() { _statusMessage.value = null }
+
+    // ── Cell-reading helpers ───────────────────────────────────────
+
+    private fun cellString(cell: org.apache.poi.ss.usermodel.Cell?): String? {
+        if (cell == null) return null
+        return try {
+            when (cell.cellType) {
+                org.apache.poi.ss.usermodel.CellType.STRING -> cell.stringCellValue?.trim()
+                org.apache.poi.ss.usermodel.CellType.NUMERIC -> {
+                    val v = cell.numericCellValue
+                    if (v == v.toLong().toDouble()) v.toLong().toString() else v.toString()
+                }
+                org.apache.poi.ss.usermodel.CellType.BOOLEAN -> cell.booleanCellValue.toString()
+                org.apache.poi.ss.usermodel.CellType.FORMULA -> try { cell.stringCellValue?.trim() } catch (_: Exception) {
+                    try { cell.numericCellValue.toString() } catch (_: Exception) { null }
+                }
+                else -> null
+            }
+        } catch (_: Exception) { null }
+    }
+
+    private fun cellDouble(cell: org.apache.poi.ss.usermodel.Cell?): Double {
+        if (cell == null) return 0.0
+        return try {
+            when (cell.cellType) {
+                org.apache.poi.ss.usermodel.CellType.NUMERIC -> cell.numericCellValue
+                org.apache.poi.ss.usermodel.CellType.STRING -> cell.stringCellValue?.trim()?.toDoubleOrNull() ?: 0.0
+                org.apache.poi.ss.usermodel.CellType.FORMULA -> try { cell.numericCellValue } catch (_: Exception) { 0.0 }
+                else -> 0.0
+            }
+        } catch (_: Exception) { 0.0 }
+    }
+
+    // ── Excel Export Styling ────────────────────────────────────────
+
+    private fun phdHeaderStyle(wb: XSSFWorkbook): XSSFCellStyle {
+        val font = wb.createFont()
+        font.bold = true
+        (font as org.apache.poi.xssf.usermodel.XSSFFont).color = IndexedColors.WHITE.index
+        font.fontHeightInPoints = 10
+        val style = wb.createCellStyle() as XSSFCellStyle
+        style.setFont(font)
+        style.setFillForegroundColor(XSSFColor(byteArrayOf(0x00.toByte(), 0x51.toByte(), 0x41.toByte()), null)) // Sea green matching theme
+        style.fillPattern = FillPatternType.SOLID_FOREGROUND
+        style.alignment = HorizontalAlignment.CENTER
+        style.setBorderBottom(BorderStyle.THIN)
+        return style
+    }
+
+    private fun phdDoneStyle(wb: XSSFWorkbook): XSSFCellStyle {
+        val style = wb.createCellStyle() as XSSFCellStyle
+        style.setFillForegroundColor(XSSFColor(byteArrayOf(0x81.toByte(), 0xC7.toByte(), 0x84.toByte()), null))
+        style.fillPattern = FillPatternType.SOLID_FOREGROUND
+        style.alignment = HorizontalAlignment.CENTER
+        return style
+    }
+
+    private fun phdStripeStyle(wb: XSSFWorkbook): XSSFCellStyle {
+        val style = wb.createCellStyle() as XSSFCellStyle
+        style.setFillForegroundColor(XSSFColor(byteArrayOf(0xF5.toByte(), 0xF5.toByte(), 0xF5.toByte()), null))
+        style.fillPattern = FillPatternType.SOLID_FOREGROUND
+        return style
+    }
+
+    // ── Excel Export ────────────────────────────────────────────────
+
+    fun exportToExcel(towers: List<Tower>) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            try {
+                val uri = withContext(Dispatchers.IO) { buildPHDWorkbook(towers) }
+                _statusMessage.value = if (uri != null) "PHD export saved to Downloads" else "Export failed"
+            } catch (e: Exception) {
+                _statusMessage.value = "Export failed: ${e.message}"
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private suspend fun buildPHDWorkbook(towers: List<Tower>): Uri? {
+        val app = getApplication<Application>()
+        val wb = XSSFWorkbook()
+        val hdrStyle = phdHeaderStyle(wb)
+        val doneStyle = phdDoneStyle(wb)
+        val stripeStyle = phdStripeStyle(wb)
+
+        for (tower in towers) {
+            val sheetName = tower.sheetName
+            val sheet = wb.createSheet(sheetName)
+
+            // Header: Tower | Flat No. | Unit Type | Door Type | Status
+            val headerRow = sheet.createRow(0)
+            listOf("Tower", "Flat No.", "Unit Type", "Door Type", "Status")
+                .forEachIndexed { i, title ->
+                    headerRow.createCell(i).apply {
+                        setCellValue(title)
+                        cellStyle = hdrStyle
+                    }
+                }
+
+            sheet.setColumnWidth(0, 15 * 256) // Tower
+            sheet.setColumnWidth(1, 12 * 256) // Flat No.
+            sheet.setColumnWidth(2, 12 * 256) // Unit Type
+            sheet.setColumnWidth(3, 20 * 256) // Door Type
+            sheet.setColumnWidth(4, 15 * 256) // Status
+
+            sheet.createFreezePane(0, 1)
+
+            // Fetch ALL statuses for this tower to avoid fetching in loop
+            val statusesList = supabase.fetchPHDStatuses(tower.id).getOrElse { JSONArray() }
+            val statusMap = mutableMapOf<Int, MutableMap<String, Boolean>>()
+            for (j in 0 until statusesList.length()) {
+                val o = statusesList.getJSONObject(j)
+                val flatNum = o.getInt("flat_number")
+                val doorType = o.getString("door_type")
+                val isDone = o.getBoolean("is_done")
+                statusMap.getOrPut(flatNum) { mutableMapOf() }[doorType] = isDone
+            }
+
+            var rowIdx = 1
+            var useStripe = false
+            for (flatNum in Activity.FLAT_NUMBERS) {
+                useStripe = !useStripe
+                val unitDigit = flatNum % 100
+                val unitLabel = when (unitDigit) {
+                    1 -> "A"
+                    2 -> "B"
+                    3 -> "C"
+                    4 -> "D"
+                    else -> "Unknown"
+                }
+                val doorTypes = PHDDoorConfig.getDoorTypes(tower.sheetName, unitDigit)
+                for (doorType in doorTypes) {
+                    val isDone = statusMap[flatNum]?.get(doorType) ?: false
+                    val row = sheet.createRow(rowIdx++)
+                    val rowStyle = if (useStripe) stripeStyle else null
+
+                    row.createCell(0).also {
+                        it.setCellValue(tower.name)
+                        if (rowStyle != null) it.cellStyle = rowStyle
+                    }
+                    row.createCell(1).also {
+                        it.setCellValue(flatNum.toDouble())
+                        if (rowStyle != null) it.cellStyle = rowStyle
+                    }
+                    row.createCell(2).also {
+                        it.setCellValue(unitLabel)
+                        if (rowStyle != null) it.cellStyle = rowStyle
+                    }
+                    row.createCell(3).also {
+                        it.setCellValue(doorType)
+                        if (rowStyle != null) it.cellStyle = rowStyle
+                    }
+                    row.createCell(4).also {
+                        if (isDone) {
+                            it.setCellValue("C")
+                            it.cellStyle = doneStyle
+                        } else if (rowStyle != null) {
+                            it.cellStyle = rowStyle
+                        }
+                    }
+                }
+            }
+        }
+
+        val fileName = "Phase3_PHD_${System.currentTimeMillis()}.xlsx"
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val cv = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                put(MediaStore.Downloads.MIME_TYPE, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+            }
+            val uri = app.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv)
+            uri?.let { app.contentResolver.openOutputStream(it)?.use { out -> wb.write(out) } }
+            wb.close()
+            uri
+        } else {
+            val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val file = File(dir, fileName)
+            file.outputStream().use { wb.write(it) }
+            wb.close()
+            Uri.fromFile(file)
+        }
+    }
+
+    // ── Excel Import ────────────────────────────────────────────────
+
+    fun importFromExcel(inputStream: InputStream, towers: List<Tower>) {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _isImporting.value = true
+            try {
+                withContext(Dispatchers.IO) {
+                    val wb = XSSFWorkbook(inputStream)
+                    for (tower in towers) {
+                        val sheet = wb.getSheet(tower.sheetName)
+                            ?: wb.getSheet("Tower ${tower.name.filter { it.isDigit() }}")
+                            ?: wb.getSheet(tower.name)
+                            ?: continue
+
+                        val statusArr = JSONArray()
+                        for (r in 1..sheet.lastRowNum) {
+                            val row = sheet.getRow(r) ?: continue
+                            // cols: 0=Tower, 1=FlatNo, 2=UnitType, 3=DoorType, 4=Status
+                            val flatNum = cellDouble(row.getCell(1)).toInt().takeIf { it > 0 } ?: continue
+                            val doorType = cellString(row.getCell(3))?.takeIf { it.isNotBlank() } ?: continue
+                            val statusRaw = cellString(row.getCell(4)) ?: ""
+                            val isDone = statusRaw.equals("Y", ignoreCase = true) || statusRaw.equals("C", ignoreCase = true)
+
+                            statusArr.put(JSONObject().apply {
+                                put("tower_id", tower.id)
+                                put("flat_number", flatNum)
+                                put("door_type", doorType)
+                                put("is_done", isDone)
+                            })
+                        }
+                        if (statusArr.length() > 0) {
+                            supabase.upsertPHDStatuses(statusArr)
+                        }
+                    }
+                    wb.close()
+                }
+                // Refresh current tower if loaded
+                val tid = _currentTowerId.value
+                if (tid > 0) loadStatuses(tid)
+                _statusMessage.value = "Imported and upsynced successfully"
+            } catch (e: Exception) {
+                _statusMessage.value = "Import failed: ${e.message}"
+            } finally {
+                _isLoading.value = false
+                _isImporting.value = false
+            }
+        }
+    }
 
     override fun onCleared() {
         super.onCleared()

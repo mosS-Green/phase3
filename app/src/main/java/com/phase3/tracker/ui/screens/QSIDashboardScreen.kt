@@ -82,7 +82,7 @@ fun QSIDashboardScreen(
                 }
             )
         },
-        snackbarHostState = { SnackbarHost(snackbarHostState) }
+        snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
         Box(
             modifier = Modifier

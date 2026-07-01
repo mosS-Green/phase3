@@ -111,6 +111,7 @@ fun AppNavigation(viewModel: MainViewModel) {
     val phdStatuses by phdViewModel.phdStatuses.collectAsStateWithLifecycle()
     val phdIsLoading by phdViewModel.isLoading.collectAsStateWithLifecycle()
     val phdIsSyncing by phdViewModel.isSyncing.collectAsStateWithLifecycle()
+    val phdIsImporting by phdViewModel.isImporting.collectAsStateWithLifecycle()
 
     val qsiViewModel: QSIViewModel = viewModel()
 
@@ -161,8 +162,21 @@ fun AppNavigation(viewModel: MainViewModel) {
         }
     }
 
+    // File picker for PHD Excel import
+    val phdImportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            result.data?.data?.let { uri ->
+                context.contentResolver.openInputStream(uri)?.let { stream ->
+                    phdViewModel.importFromExcel(stream, towers)
+                }
+            }
+        }
+    }
+
     // Is any import in progress?
-    val isAnyImporting = isMainImporting || dwIsImporting
+    val isAnyImporting = isMainImporting || dwIsImporting || phdIsImporting
 
     // Global overlay: NavHost + persistent sync indicator + loading overlay
     Box(modifier = Modifier.fillMaxSize()) {
@@ -434,6 +448,16 @@ fun AppNavigation(viewModel: MainViewModel) {
                     onUnitTypeClick = { towerIndex, unitDigit ->
                         navController.navigate(Screen.PHDUnitType.createRoute(towerIndex, unitDigit))
                     },
+                    onExportExcel = { phdViewModel.exportToExcel(towers) },
+                    onImportExcel = {
+                        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                            addCategory(Intent.CATEGORY_OPENABLE)
+                            type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        }
+                        phdImportLauncher.launch(intent)
+                    },
+                    statusMessage = phdStatusMessage,
+                    onStatusDismiss = { phdViewModel.clearStatusMessage() },
                     onBack = { navController.popBackStack() }
                 )
             }

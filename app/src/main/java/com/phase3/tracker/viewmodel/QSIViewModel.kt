@@ -193,6 +193,10 @@ class QSIViewModel(application: Application) : AndroidViewModel(application) {
         recalculateMetrics()
     }
 
+    fun clearStatusMessage() {
+        _statusMessage.value = null
+    }
+
     // ── Calculated Metrics ────────────────────────────────────────────────
     private val _metrics = MutableStateFlow<QSIMetrics?>(null)
     val metrics: StateFlow<QSIMetrics?> = _metrics.asStateFlow()

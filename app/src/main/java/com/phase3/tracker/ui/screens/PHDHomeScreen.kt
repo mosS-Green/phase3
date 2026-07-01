@@ -5,7 +5,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.MeetingRoom
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -21,8 +21,20 @@ fun PHDHomeScreen(
     towers: List<Tower>,
     onTowerClick: (towerIndex: Int) -> Unit,
     onUnitTypeClick: (towerIndex: Int, unitDigit: Int) -> Unit,
+    onExportExcel: () -> Unit,
+    onImportExcel: () -> Unit,
+    statusMessage: String?,
+    onStatusDismiss: () -> Unit,
     onBack: () -> Unit
 ) {
+    val snackbarHostState = remember { SnackbarHostState() }
+    LaunchedEffect(statusMessage) {
+        if (!statusMessage.isNullOrBlank()) {
+            snackbarHostState.showSnackbar(statusMessage)
+            onStatusDismiss()
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -32,11 +44,22 @@ fun PHDHomeScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
+                actions = {
+                    // Import
+                    IconButton(onClick = onImportExcel) {
+                        Icon(Icons.Default.FileOpen, contentDescription = "Import Excel")
+                    }
+                    // Export
+                    IconButton(onClick = onExportExcel) {
+                        Icon(Icons.Default.SaveAlt, contentDescription = "Export Excel")
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface
                 )
             )
         },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         containerColor = MaterialTheme.colorScheme.surface
     ) { padding ->
         Column(
