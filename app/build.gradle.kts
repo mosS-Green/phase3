@@ -42,8 +42,7 @@ android {
         
         versionCode = commits
         versionName = "3.0.0-rev$commits-$gitHash"
-        buildConfigField("String", "BOT_TOKEN", "\"${System.getenv("BOT_TOKEN") ?: ""}\"")
-        buildConfigField("String", "CHAT_ID", "\"${System.getenv("CHAT_ID") ?: ""}\"")
+
         buildConfigField("String", "SUPABASE_URL", "\"${System.getenv("SUPABASE_URL") ?: ""}\"")
         buildConfigField("String", "SUPABASE_ANON_KEY", "\"${System.getenv("SUPABASE_ANON_KEY") ?: ""}\"")
     }
@@ -109,7 +108,7 @@ dependencies {
     implementation("org.apache.poi:poi:5.2.5")
     implementation("org.apache.poi:poi-ooxml:5.2.5")
 
-    // OkHttp for Telegram API
+    // OkHttp for Supabase REST API
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     // Coroutines
