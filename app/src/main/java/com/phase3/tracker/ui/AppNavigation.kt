@@ -44,6 +44,7 @@ import com.phase3.tracker.ui.screens.*
 import com.phase3.tracker.viewmodel.DWViewModel
 import com.phase3.tracker.viewmodel.MainViewModel
 import com.phase3.tracker.viewmodel.PHDViewModel
+import com.phase3.tracker.viewmodel.QSIViewModel
 
 sealed class Screen(val route: String) {
     data object Home : Screen("home")
@@ -77,6 +78,11 @@ sealed class Screen(val route: String) {
     data object PHDUnitType : Screen("phd_unit_type/{towerIndex}/{unitDigit}") {
         fun createRoute(towerIndex: Int, unitDigit: Int) = "phd_unit_type/$towerIndex/$unitDigit"
     }
+    // QSI screens
+    data object QSIDashboard : Screen("qsi_dashboard")
+    data object QSIDetail : Screen("qsi_detail/{detailType}") {
+        fun createRoute(detailType: String) = "qsi_detail/$detailType"
+    }
 }
 
 @Composable
@@ -105,6 +111,8 @@ fun AppNavigation(viewModel: MainViewModel) {
     val phdStatuses by phdViewModel.phdStatuses.collectAsStateWithLifecycle()
     val phdIsLoading by phdViewModel.isLoading.collectAsStateWithLifecycle()
     val phdIsSyncing by phdViewModel.isSyncing.collectAsStateWithLifecycle()
+
+    val qsiViewModel: QSIViewModel = viewModel()
 
     val context = LocalContext.current
 
@@ -198,7 +206,8 @@ fun AppNavigation(viewModel: MainViewModel) {
                     onDeleteActivity = { towerIndex, activityIndex ->
                         viewModel.deleteActivity(towerIndex, activityIndex)
                     },
-                    getFilteredActivities = { viewModel.getFilteredActivities(it) }
+                    getFilteredActivities = { viewModel.getFilteredActivities(it) },
+                    onNavigateToQSI = { navController.navigate(Screen.QSIDashboard.route) }
                 )
             }
 
@@ -515,6 +524,28 @@ fun AppNavigation(viewModel: MainViewModel) {
                         onBack = { navController.popBackStack() }
                     )
                 }
+            }
+
+            composable(Screen.QSIDashboard.route) {
+                QSIDashboardScreen(
+                    qsiViewModel = qsiViewModel,
+                    onNavigateToDetail = { detailType ->
+                        navController.navigate(Screen.QSIDetail.createRoute(detailType))
+                    },
+                    onBack = { navController.popBackStack() }
+                )
+            }
+
+            composable(
+                route = Screen.QSIDetail.route,
+                arguments = listOf(navArgument("detailType") { type = NavType.StringType })
+            ) { backStackEntry ->
+                val detailType = backStackEntry.arguments?.getString("detailType") ?: "discipline"
+                QSIDetailScreen(
+                    detailType = detailType,
+                    qsiViewModel = qsiViewModel,
+                    onBack = { navController.popBackStack() }
+                )
             }
         }
 

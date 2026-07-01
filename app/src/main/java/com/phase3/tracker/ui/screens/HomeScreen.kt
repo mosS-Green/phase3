@@ -53,7 +53,8 @@ fun HomeScreen(
     onAddActivity: (towerIndex: Int, name: String, contractor: String, categories: List<String>, groupName: String, usePercentage: Boolean, weightage: Int) -> Unit,
     onRenameActivity: (towerIndex: Int, activityIndex: Int, newName: String, contractor: String, categories: List<String>, groupName: String, usePercentage: Boolean, weightage: Int) -> Unit,
     onDeleteActivity: (towerIndex: Int, activityIndex: Int) -> Unit,
-    getFilteredActivities: (Tower) -> List<Activity>
+    getFilteredActivities: (Tower) -> List<Activity>,
+    onNavigateToQSI: () -> Unit
 ) {
     var selectedTowerIndex by rememberSaveable { mutableIntStateOf(0) }
     var showStatusFilterMenu by remember { mutableStateOf(false) }
@@ -449,9 +450,15 @@ fun HomeScreen(
 
                 // ── Edit / Data FAB (primary) ───────────────────
                 FloatingActionButton(
-                    onClick = onNavigateToData,
+                    onClick = {},
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(16.dp))
+                        .combinedClickable(
+                            onClick = onNavigateToData,
+                            onLongClick = onNavigateToQSI
+                        )
                 ) {
                     Icon(Icons.Default.Edit, contentDescription = "Data")
                 }
